@@ -1,0 +1,42 @@
+flowchart TB
+  UI[统一研发工作台：设备 / 数采 / 数据 / 模型 / 训练 / 部署]
+  API[管理 API：当前本地 HTTP；权限和持久化任务待补]
+  UI --> API
+  subgraph EDGE[边：采集工作站 / 边缘计算机]
+    IO[设备驱动：UR 只读RTDE / RealSense / M3025 UART]
+    GELLO[GELLO 观测与目标动作发布]
+    REC[多模态记录：图像 / 关节 / 动作 / 触觉 / 时戳]
+    QA[质量检查；后续补时钟标定和重采样]
+    EXEC[受控执行：推理 / 适配 / 仲裁 / 接管，待开发]
+    IO --> REC
+    GELLO --> REC --> QA
+  end
+  subgraph CLOUD[云 / 私有服务器：首期可与边缘服务同机]
+    DATA[数据资产：版本 / 标注 / 固定划分，部分实现]
+    TRAIN[DP 训练已有；远端调度 / ACT / VLA 待扩展]
+    MODELS[模型注册 / 实机评测 / 发布，待完善]
+    DATA --> TRAIN --> MODELS
+  end
+  API --> EDGE
+  API --> CLOUD
+  QA --> DATA
+  MODELS -.固定模型与运行契约.-> EXEC
+  subgraph STORAGE[统一资产存储]
+    DB[元数据数据库，待开发：SQLite → PostgreSQL]
+    FILES[实际文件：Zarr / 权重 / 配置 / 日志；对象存储与备份待扩展]
+  end
+  DATA --> DB
+  TRAIN --> DB
+  MODELS --> DB
+  REC --> FILES
+  TRAIN --> FILES
+  MODELS --> FILES
+  subgraph ENDPOINT[端：实际设备及现场既有控制]
+    UR[UR5e + 二指夹爪；现有 GELLO 控制路径]
+    SENSORS[RealSense RGB / PaXini M3025]
+    HUMANOID[G1 / 因时；SONIC / TeleopIt / SuperMimic 待适配]
+  end
+  UR --> IO
+  SENSORS --> IO
+  HUMANOID -.后续.-> IO
+  EXEC -.经现场验证后接入.-> UR

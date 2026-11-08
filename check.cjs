@@ -1,0 +1,10 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const elements=new Map();const el=key=>{if(!elements.has(key))elements.set(key,{innerHTML:'',textContent:'',value:'',style:{},classList:{toggle(){}},showModal(){this.open=true},close(){this.open=false}});return elements.get(key)};
+const sandbox={console,document:{querySelector:el,querySelectorAll:()=>[]},location:{hash:''},window:{addEventListener(){},scrollTo(){}},localStorage:{getItem(){return null},setItem(){}},setInterval(fn){sandbox.tick=fn},setTimeout(){},clearTimeout(){},URL,Blob};vm.createContext(sandbox);vm.runInContext(fs.readFileSync('dist/app.js','utf8'),sandbox);
+const run=x=>vm.runInContext(x,sandbox);
+run(`for(const id of Object.keys(views)){location.hash='#'+id;render();if(!$('#app').innerHTML.includes('<h1>'))throw Error(id)}`);
+run(`capture.seconds=4;capture.task='桌面抓取';saveCapture()`);assert.equal(run('state.datasets.length'),4);
+el('#train-name').value='闭环验证';el('#train-data').value=run('state.datasets[0].id');el('#train-model').value='ACT';el('#train-mode').value='基线训练（模拟）';run('startTraining()');for(let i=0;i<25;i++)sandbox.tick();assert.equal(run('state.jobs[0].status'),'已完成');
+el('#deploy-model').value=run('state.jobs[0].id');el('#deploy-node').value='Edge-01 / 边缘推理节点';run('deployModel()');assert.equal(run('state.deployments.length'),1);run('deployModel()');assert.equal(run('state.deployments.length'),1);run('feedback(state.deployments[0].id)');assert.equal(run('state.datasets.length'),5);run('rollback(state.deployments[0].id)');assert.equal(run('state.deployments.length'),0);
+el('#data-search').value='不存在';el('#data-task').value='全部任务';run('filterData()');assert(el('#dataset-table').innerHTML.includes('没有符合'));
+console.log('PASS: 8 page renders; capture -> dataset -> training -> deployment -> feedback; duplicate node guard; rollback; empty search. Browser visual verification remains separate.');

@@ -1,0 +1,5 @@
+-r robotics/requirements-dp.txt
+pyserial>=3.5,<4
+# Optional physical-device dependencies (install on the acquisition workstation):
+# ur-rtde
+# pyrealsense2

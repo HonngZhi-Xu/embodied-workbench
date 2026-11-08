@@ -1,0 +1,21 @@
+# Older converted two-camera direct-Zarr datasets; no video directory is needed.
+name: gello_legacy_image
+shape_meta:
+  obs:
+    image0: {shape: [3, 480, 640], type: rgb}
+    image1: {shape: [3, 480, 640], type: rgb}
+    agent_pos: {shape: [7], type: low_dim}
+  action: {shape: [7]}
+dataset:
+  _target_: diffusion_policy.dataset.gello_zarr_image_dataset.GelloZarrImageDataset
+  shape_meta: ${shape_meta}
+  dataset_path: ???
+  horizon: ${horizon}
+  pad_before: ${eval:'${n_obs_steps}-1'}
+  pad_after: ${eval:'${n_action_steps}-1'}
+  n_obs_steps: ${n_obs_steps}
+  seed: 42
+  val_ratio: 0.1
+  check_chunks: true
+env_runner:
+  _target_: diffusion_policy.env_runner.offline_image_runner.OfflineImageRunner

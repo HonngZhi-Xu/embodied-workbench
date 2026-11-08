@@ -1,0 +1,23 @@
+defaults:
+  - train_diffusion_unet_image_workspace
+  - override task: gello_image
+  - _self_
+
+name: train_gello_dp
+policy:
+  obs_encoder:
+    # Preserve a view of the whole scene rather than a 76px crop of a 640px frame.
+    resize_shape: [96, 128]
+    crop_shape: null
+    share_rgb_model: true
+  down_dims: [128, 256, 512]
+training:
+  resume: false
+  num_epochs: 200
+logging:
+  mode: offline
+checkpoint:
+  topk:
+    monitor_key: val_loss
+    mode: min
+    format_str: 'epoch={epoch:04d}-val_loss={val_loss:.6f}.ckpt'

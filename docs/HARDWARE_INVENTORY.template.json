@@ -1,0 +1,16 @@
+{
+  "purpose": "Manual handoff inventory only; not consumed by edge_agent",
+  "software_version": "v0.2.1",
+  "robot": {"model": "UR5e", "ip": null, "controller_version": null, "reference_joints_rad": null},
+  "gripper": {"type": "two_finger", "brand_model": null, "driver_backend": null, "command_unit": null, "command_range": null, "feedback_source": null},
+  "gello": {"known_good_launch_command": null, "master_port": null, "control_hz": null},
+  "cameras": [
+    {"key": "camera_0", "mount": "wrist", "observation_key": "image_wrist", "serial": null, "intrinsics": null},
+    {"key": "camera_1", "mount": "fixed_side_1", "observation_key": "image_base", "serial": null, "intrinsics": null},
+    {"key": "camera_2", "mount": "fixed_side_2", "observation_key": "image_camera_2", "serial": null, "intrinsics": null}
+  ],
+  "tactile": {"reported_model": "PaXini M3025", "implemented_protocol": "CP-M3025-Core GEN3", "physical_protocol_confirmed": false, "port": null, "device_id": null, "baudrate": 921600},
+  "workstation": {"os": null, "python": null, "gpu": null, "driver": null, "data_root": null, "free_disk_gib": null},
+  "verified_by": null,
+  "verified_at": null
+}
