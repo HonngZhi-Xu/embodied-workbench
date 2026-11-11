@@ -68,7 +68,7 @@ function uwCapturePanel() {
       <button class="primary" ${disabled(!running)} onclick="uwCaptureStart()">启动现场采集</button>
       <button ${disabled(running && session?.align_prompt && session?.phase==='waiting_align')} onclick="uwConfirm('align')">发送 ALIGN</button>
       <button ${disabled(running && session?.phase==='align_sent')} onclick="uwConfirm('ready')">确认对齐已完成</button>
-      <button ${disabled(running && session?.aligned && session?.phase!=='recording')} onclick="uwCaptureKey('start')">s ↵ 开始录制</button>
+      <button ${disabled(running && session?.aligned && !['recording','next_sent'].includes(session?.phase))} onclick="uwCaptureKey('start')">s ↵ 开始录制</button>
       <button ${disabled(running && ['recording','next_sent'].includes(session?.phase))} onclick="uwCaptureKey('finish')">↵ 结束本条</button>
       <button ${disabled(running && ['recording','next_sent'].includes(session?.phase))} onclick="uwConfirm('discard')">d ↵ 删除当前条</button>
       <button ${disabled(running && session?.phase==='between')} onclick="uwCaptureKey('next')">u ↵ 进入下一条</button>

@@ -182,7 +182,7 @@ class URWorkflow:
                 raise ValueError('删除当前条需要确认。')
             if action in ('finish', 'discard') and session['phase'] not in ('recording', 'next_sent'):
                 raise ValueError('当前没有已发送的录制命令。')
-            if action in ('start', 'next') and session['phase'] == 'recording':
+            if action in ('start', 'next') and session['phase'] in ('recording', 'next_sent'):
                 raise ValueError('先结束当前条。')
             if action == 'next' and session['phase'] != 'between':
                 raise ValueError('结束当前条后再进入下一条。')

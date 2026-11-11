@@ -70,6 +70,8 @@ def test_align_requires_prompt_and_operator_ack_before_keys(monkeypatch):
         runner.send_key('start', 'test-session')
     runner.send_key('finish', 'test-session')
     runner.send_key('next', 'test-session')
+    with pytest.raises(ValueError):
+        runner.send_key('start', 'test-session')
     runner.send_key('finish', 'test-session')
     assert [v for _, v in sent] == [b'ALIGN\n', b's\n', b'\n', b'u\n', b'\n']
 
