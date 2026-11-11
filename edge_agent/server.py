@@ -5,9 +5,12 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit, parse_qs
 from edge_agent.core import EdgeCore
+from edge_agent.ur_workflow import URWorkflow
 
 
 def handler_for(core, static_dir):
+    if not hasattr(core, 'ur_workflow'):
+        core.ur_workflow = URWorkflow(core)
     class Handler(SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=str(static_dir), **kwargs)
@@ -43,6 +46,8 @@ def handler_for(core, static_dir):
                 elif url.path == '/api/status':
                     response = dict(devices=core.hub.snapshot(), capture=core.capture_status(),
                                     jobs=list(core.jobs.values()))
+                elif url.path == '/api/ur-workflow/status':
+                    response = core.ur_workflow.status()
                 elif url.path == '/api/camera-guard/status':
                     response = core.camera_guard.summary()
                 elif url.path == '/api/camera-guard/check':
@@ -86,10 +91,24 @@ def handler_for(core, static_dir):
                 if route == '/api/devices/connect':
                     core.hub.connect(body['device'], body['config'])
                     response = dict(accepted=True)
+                elif route == '/api/ur-workflow/capture/start':
+                    response = core.ur_workflow.start_capture(body['script'])
+                elif route == '/api/ur-workflow/capture/key':
+                    response = core.ur_workflow.send_key(body['action'], body['session_id'], body.get('confirmed', False))
+                elif route == '/api/ur-workflow/capture/stop':
+                    response = core.ur_workflow.stop_capture(body['session_id'])
+                elif route == '/api/ur-workflow/training/preview':
+                    response = core.ur_workflow.prepare_training(body)
+                elif route == '/api/ur-workflow/training/start':
+                    response = core.ur_workflow.start_training(body)
+                elif route == '/api/ur-workflow/training/cancel':
+                    response = core.ur_workflow.cancel_training(body['id'])
                 elif route == '/api/devices/disconnect':
                     core.hub.disconnect(body['device'])
                     response = dict(disconnected=True)
                 elif route == '/api/capture/start':
+                    if core.ur_workflow.capture_process is not None and core.ur_workflow.capture_process.poll() is None:
+                        raise ValueError('现场脚本正在录制，请使用现场采集按键。')
                     response = core.start_capture(body.get('tactile', False), body.get('require_camera_check', False),body.get('expected_cameras'))
                 elif route == '/api/camera-guard/baseline':
                     with core.lock:
@@ -114,7 +133,10 @@ def handler_for(core, static_dir):
                 elif route == '/api/training/start':
                     response = core.start_training(body)
                 elif route == '/api/training/cancel':
-                    response = core.cancel_training(body['id'])
+                    if core.jobs[body['id']].get('runner') == 'robodiff':
+                        response = core.ur_workflow.cancel_training(body['id'])
+                    else:
+                        response = core.cancel_training(body['id'])
                 else:
                     return self.reply(404, dict(error='Unknown API route.'))
                 self.reply(200, response)
@@ -139,6 +161,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        core.ur_workflow.close()
         server.server_close()
         for name in list(core.hub.workers):
             core.hub.disconnect(name)

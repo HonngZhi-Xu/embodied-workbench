@@ -1,0 +1,46 @@
+# UR5e 现场流程 v0.2.2
+
+新增“UR5e 现场采集”和视觉 DP 训练页，按现场用户提供的命令与按键适配。
+
+在连接 UR 工位的 Linux 主机安装接入包依赖，从能够找到 conda 的终端运行
+`python -m edge_agent.server`。打开 http://127.0.0.1:8787/#ur-live 并连接本地工作台。
+填写现场 `start_live_follow_local.sh` 的绝对路径，点击“启动现场采集”。
+服务通过 Linux PTY 启动 `bash SCRIPT --no-tactile` 并接收日志。
+启动前应结束其他终端中运行的同一采集程序。
+
+## 采集流程
+
+1. 等待终端输出 ALIGN，确认现场姿态后点击“发送 ALIGN”。
+2. 观察机械臂与日志，关节对齐完成后点击“确认对齐已完成”。
+3. s＋Enter 开始，Enter 结束本条。
+4. d＋Enter 在录制期间删除当前条，界面需要单独确认。
+5. u＋Enter 进入下一条录制，含义由现场用户确认。
+6. 结束本条并核对保存结果，再停止平台托管的采集进程。
+
+平台状态表示按键已发送，实际录制、保存与删除结果以现场脚本日志为准。
+本页沿用脚本自己的保存流程；“实机数据管理”中的旁路录制属于另一入口。
+两条录制链路不能同时启动。训练与现场采集按顺序执行，避免读取变化中的数据。
+相机基准检查依赖实际 GELLO 帧推送，需独立核对。现场脚本按键链路尚未自动执行相机检查。
+
+## 视觉训练
+
+默认项目为 `/home/zaq/diffusion_policy`，环境 `robodiff`，配置
+`train_gello_live_image_20hz`。输入完整 Zarr 数据集路径。
+保留 camera_0/1/2、robot_joint、gripper_position，删除 tactile，resume=false。
+支持修改 epochs、batch size、学习率、weight decay、观测步数、resize/crop、
+随机裁剪、检查点间隔、Top-K 指标与数量、实验名、输出根目录。
+
+“更新命令”生成可复制的 conda activate 命令。
+本地启动通过 `conda run --no-capture-output -n robodiff python train.py ...`，
+工作目录为指定项目。进程采用参数数组启动，路径不会拼进 shell 执行。
+开始前检查项目、配置、数据字段、episode 边界、有限值和物理数据块。
+完整 Hydra 配置字段以现场项目为准。
+
+输出在 `输出根目录/日期/时间/任务ID`，包含请求参数、日志和训练检查点。
+Top-K 默认监控 train_loss，用于训练拟合和检查点筛选。正式效果需独立评测。
+
+## 验证范围
+
+离线验证包括按键字节、ALIGN 提示及人工确认、删除确认、旧会话拒绝和训练命令保真。
+Windows 可编辑、复制命令；现场 PTY 需要 Linux。
+本轮未连接 `/home/zaq` 主机，未实测其脚本提示、PTY 兼容性和完整 robodiff 配置。
