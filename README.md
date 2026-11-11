@@ -1,5 +1,7 @@
 # 具身工坊 · G1 / UR5e 多模态研发平台
 
+**v0.2.3 操作流程更新**：首次保存工位配置，日常使用“数采 → 数据 → 训练”。硬件和环境设置由本地服务持久化，数采与训练读取已保存配置，高级参数按需展开。详见 [现场操作说明](UR_SITE_WORKFLOW.md#v023-工位工作流)。
+
 **v0.2.2 现场流程更新**：UR5e 首页增加现场采集入口，支持本地 Linux PTY 托管 GELLO 脚本，通过按钮发送 ALIGN、s、Enter、d、u，并显示终端日志。视觉 DP 训练页按现场 robodiff / 20Hz 配置生成命令，可编辑完整数据集路径和训练参数。安装后从能找到 conda 的终端启动本地服务，详见 [UR_SITE_WORKFLOW.md](UR_SITE_WORKFLOW.md)。按键与训练配置已离线验证，现场脚本兼容性仍需在 Linux 工位核对。
 
 当前交付 **v0.2.1**，优先供机器人同学接入 **UR5e＋GELLO＋二指夹爪＋三路 RealSense（两固定侧视、一腕部）＋PaXini M3025 串口触觉**，完成抓取放置数据采集和 Diffusion Policy 离线训练。首次接入请先读 [硬件交接说明](HARDWARE_HANDOFF.md)。

@@ -6,11 +6,13 @@ from pathlib import Path
 from urllib.parse import urlsplit, parse_qs
 from edge_agent.core import EdgeCore
 from edge_agent.ur_workflow import URWorkflow
+from edge_agent.workstation import WorkstationStore
 
 
 def handler_for(core, static_dir):
     if not hasattr(core, 'ur_workflow'):
         core.ur_workflow = URWorkflow(core)
+        core.workstation = WorkstationStore(core.data_root)
     class Handler(SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=str(static_dir), **kwargs)
@@ -48,6 +50,8 @@ def handler_for(core, static_dir):
                                     jobs=list(core.jobs.values()))
                 elif url.path == '/api/ur-workflow/status':
                     response = core.ur_workflow.status()
+                elif url.path == '/api/workstation':
+                    response = core.workstation.read()
                 elif url.path == '/api/camera-guard/status':
                     response = core.camera_guard.summary()
                 elif url.path == '/api/camera-guard/check':
@@ -91,6 +95,12 @@ def handler_for(core, static_dir):
                 if route == '/api/devices/connect':
                     core.hub.connect(body['device'], body['config'])
                     response = dict(accepted=True)
+                elif route == '/api/workstation':
+                    with core.lock, core.ur_workflow.lock:
+                        process = core.ur_workflow.capture_process
+                        if core.capture is not None or (process is not None and process.poll() is None) or any(j['status'] == 'running' for j in core.jobs.values()):
+                            raise ValueError('请先结束采集或训练，再修改工位配置。')
+                        response = core.workstation.save(body['profile'], body.get('expected_revision'))
                 elif route == '/api/ur-workflow/capture/start':
                     response = core.ur_workflow.start_capture(body['script'])
                 elif route == '/api/ur-workflow/capture/key':
