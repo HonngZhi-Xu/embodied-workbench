@@ -19,8 +19,13 @@ def read():
     return text
 
 print('Help: ALIGN is required later; this banner is not a prompt.', flush=True)
-sys.stdout.write('Press Ent'); sys.stdout.flush(); time.sleep(.08)
-sys.stdout.write('er to continue: '); sys.stdout.flush()
+if len(sys.argv) > 2 and sys.argv[2] == 'live-r3':
+    sys.stdout.write('确认已单独同意本次40N/18N夹爪参数、现场已准备好，按Ent')
+    sys.stdout.flush(); time.sleep(.08)
+    sys.stdout.write('er启动（其他输入取消）：'); sys.stdout.flush()
+else:
+    sys.stdout.write('Press Ent'); sys.stdout.flush(); time.sleep(.08)
+    sys.stdout.write('er to continue: '); sys.stdout.flush()
 assert read() == ''
 print('\nOutput directory: ' + str(root), flush=True)
 print('Type ALIGN to confirm alignment: ', end='', flush=True)

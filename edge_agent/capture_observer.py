@@ -13,7 +13,9 @@ from pathlib import Path
 ANSI = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]')
 DEFAULT_PROMPTS = {
     'startup': [r'(?im)^[ \t]*(?:\[[^\]\r\n]{1,50}\][ \t]*)?press[ \t]+(?:\[?enter\]?|return)[ \t]+to[ \t]+(?:continue|start|proceed)[^\r\n]{0,180}[:：>][ \t]*',
-                r'(?m)^[ \t]*(?:请|确认[^\r\n]{0,50}后，?)?按(?:下)?[ \t]*(?:Enter|ENTER|回车)[^\r\n]{0,120}(?:继续|启动)[^\r\n]{0,30}[:：>][ \t]*'],
+                r'(?m)^[ \t]*(?:请|确认[^\r\n]{0,50}后，?)?按(?:下)?[ \t]*(?:Enter|ENTER|回车)[^\r\n]{0,120}(?:继续|启动)[^\r\n]{0,30}[:：>][ \t]*',
+                # LIVE-R3 launcher: require the complete consent prompt, not its help banner.
+                r'(?im)^[ \t]*确认已单独同意本次[^\r\n]{1,80}夹爪参数[、，, \t]+现场已准备好[，, \t]+按[ \t]*Enter[ \t]*启动[（(]其他输入取消[）)][ \t]*[:：>][ \t]*'],
     'align': [r'(?im)^[ \t]*(?:\[[^\]\r\n]{1,50}\][ \t]*)?(?:type|enter|input)[ \t]+[\'\"\[]?ALIGN[\'\"\]]?[ \t]+(?:to[ \t]+)?(?:confirm|continue|start|execute)[^\r\n]{0,180}[:：>][ \t]*',
               r'(?m)^[ \t]*(?:请)?输入[ \t]*[\'\"\[]?ALIGN[\'\"\]]?[^\r\n]{0,120}(?:确认|对齐|继续)[^\r\n]{0,30}[:：>][ \t]*'],
 }
@@ -64,7 +66,9 @@ class CaptureObserver:
         for kind, patterns in self.patterns.items():
             for pattern in patterns:
                 for match in pattern.finditer(self.buffer):
-                    absolute_end = self.base + match.end()
+                    # A trailing space delivered in the next PTY chunk is still
+                    # the same prompt, even after its Enter was already sent.
+                    absolute_end = self.base + match.start() + len(match.group(0).rstrip(' \t'))
                     if absolute_end > self.seen_prompt_end:
                         events.append((absolute_end, kind, match.group(0)))
         for match in re.finditer(r'(?m)^\{[^\r\n]+\}[ \t]*\n', self.buffer):
