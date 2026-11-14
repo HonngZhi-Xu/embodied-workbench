@@ -1,0 +1,20 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const elements=new Map();
+function element(k){if(!elements.has(k))elements.set(k,{innerHTML:'',textContent:'',value:'',checked:false,style:{},classList:{toggle(){}},insertAdjacentHTML(_p,s){this.innerHTML+=s},showModal(){},close(){}});return elements.get(k)}
+const context={console,document:{querySelector:element,querySelectorAll:()=>[]},location:{hash:'#tactile-research',hostname:'example.test'},window:{addEventListener(){},scrollTo(){}},localStorage:{getItem(){return null},setItem(){}},setInterval(){},setTimeout(){},clearTimeout(){},URL,Blob,AbortSignal};
+vm.createContext(context);
+for(const name of ['app.js','platform.js','camera-guard.js','ur-workflow.js','ur-experience.js','tactile-integration.js'])vm.runInContext(fs.readFileSync('dist/'+name,'utf8'),context);
+const run=c=>vm.runInContext(c,context);
+assert(element('#nav').innerHTML.includes('触觉研究工作台'));
+assert(element('#app').innerHTML.includes('mode=demo'));
+assert(element('#app').innerHTML.includes('浏览器演示'));
+assert(element('#app').innerHTML.includes('embedded=1'));
+run("pMode='live';render()");
+assert(element('#app').innerHTML.includes('mode=live'));
+assert(element('#app').innerHTML.includes('本地研究记录'));
+assert(element('#app').innerHTML.includes('不会启动 GPU 训练'));
+run("location.hash='#ur5e';render()");
+assert(element('#app').innerHTML.includes('先配置你的工位'));
+assert(fs.readFileSync('dist/index.html','utf8').includes('tactile-integration.js'));
+assert(fs.existsSync('dist/tactile-lab/index.html'));
+console.log('PASS tactile research navigation, isolated embedded styles, explicit demo/live modes and preserved UR workflow.');

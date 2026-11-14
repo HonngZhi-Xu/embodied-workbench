@@ -1,0 +1,35 @@
+{
+  "source": "User supplied M3025_Tactile_Workbench_Source.zip",
+  "archive_sha256": "0bf6b05cfb7ffd537bc29ae58aaa2b39ac065e49f4a163f5a8ef676d30118f8b",
+  "files": [
+    {
+      "path": "app/page.tsx",
+      "sha256": "104b482b7224146c019ef4b9822b160ba6b2588e276d4662d349e20355e06972"
+    },
+    {
+      "path": "app/globals.css",
+      "sha256": "5e5d83fad908da4a0fdef8e9313355a9251fb4e794cd951de63540a0e7a09248"
+    },
+    {
+      "path": "app/components/DataViews.tsx",
+      "sha256": "5d8000b1935f5fa3d1d8783ce3cb6b1e417415161d1ba6393734fd673227d06d"
+    },
+    {
+      "path": "app/components/ResearchViews.tsx",
+      "sha256": "e2cf93da4b74b973d6adde80c640c755ab4c00978f6c5b01482d378c6c79f8ca"
+    },
+    {
+      "path": "app/components/data-views.css",
+      "sha256": "2168e37bcb05c9b3bae6d3d4680b1284b29a54557e6c3f3ee29c2b372857c4e6"
+    },
+    {
+      "path": "app/components/research-views.css",
+      "sha256": "1d42d452ce038c8cefe32eb12a5251f6e8c9337ac29135405579bc044ee006cb"
+    },
+    {
+      "path": "lib/workbench.ts",
+      "sha256": "fbdd83b007cc1bb8d02432db7cf05d1c91e18fc6ca97fe5d3603a8923e766a12"
+    }
+  ],
+  "adaptation": "Standalone React build and local platform/IndexedDB API adapter; original eight research views retained; original Site identity/auth/database credentials excluded"
+}

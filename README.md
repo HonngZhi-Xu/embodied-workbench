@@ -1,5 +1,9 @@
 # 具身工坊 · G1 / UR5e 多模态研发平台
 
+**v0.2.5 M3025 触觉研究**：接入数据与 Episode、预处理、编码器配置、融合实验、评估追溯及研究报告；可从平台已保存资产导入触觉片段。研究记录和附件由本地服务保存，线上为浏览器演示。研究配置不会自动启动预训练或改动原 DP 项目，见 [触觉研究说明](docs/TACTILE_RESEARCH.md)。
+
+本轮验证：113 项 Python 测试通过（3 项 Windows 环境限制跳过），19 项研究模块检查及 6 项平台前端检查通过；浏览器验证配置保存、刷新保留和合成触觉文件导入。详见 [验证记录](docs/VALIDATION_V025.md)。
+
 **v0.2.4 外部采集适配**：新增启动现场确认、正确的 s/Enter/d/u/q 操作、触觉模式与接续参数；外部数据只读登记、检查与回放，训练通过资产检查后使用真实路径。原采集和训练项目保持原样。更新时需同时更新前端与 edge_agent，见 [现场流程与验收边界](UR_SITE_WORKFLOW.md)。
 
 v0.2.4 验证：87 项离线测试通过，3 项受 Windows 环境限制跳过；5 项前端检查通过，并核对了浏览器配置保存与数采页面。详见 [验证记录](docs/VALIDATION_V024.md)。
@@ -8,7 +12,7 @@ v0.2.4 验证：87 项离线测试通过，3 项受 Windows 环境限制跳过�
 
 **v0.2.2 现场流程更新**：UR5e 首页增加现场采集入口，支持本地 Linux PTY 托管 GELLO 脚本，通过按钮发送 ALIGN、s、Enter、d、u，并显示终端日志。视觉 DP 训练页按现场 robodiff / 20Hz 配置生成命令，可编辑完整数据集路径和训练参数。安装后从能找到 conda 的终端启动本地服务，详见 [UR_SITE_WORKFLOW.md](UR_SITE_WORKFLOW.md)。按键与训练配置已离线验证，现场脚本兼容性仍需在 Linux 工位核对。
 
-当前交付 **v0.2.4**，优先供机器人同学接入 **UR5e＋GELLO＋二指夹爪＋三路 RealSense（两固定侧视、一腕部）＋PaXini M3025 串口触觉**，完成抓取放置数据采集和 Diffusion Policy 离线训练。首次接入请先读 [硬件交接说明](HARDWARE_HANDOFF.md)。
+当前交付 **v0.2.5**，优先供机器人同学接入 **UR5e＋GELLO＋二指夹爪＋三路 RealSense（两固定侧视、一腕部）＋PaXini M3025 串口触觉**，完成抓取放置数据采集和 Diffusion Policy 离线训练。首次接入请先读 [硬件交接说明](HARDWARE_HANDOFF.md)。
 
 ```bash
 git clone https://github.com/HonngZhi-Xu/embodied-workbench.git

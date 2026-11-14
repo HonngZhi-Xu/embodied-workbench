@@ -284,10 +284,12 @@ class EdgeCore:
                 code = process.wait()
                 with self.lock:
                     job['exit_code'] = code
-                    job['status'] = 'completed' if code == 0 else ('cancelled' if job.get('cancel_requested') else 'failed')
                     job['finished_at'] = time.time()
                     checkpoint = run/'output/checkpoints/latest.ckpt'
                     job['checkpoint'] = str(checkpoint) if checkpoint.exists() else None
+                    # Publish terminal status after all result fields, including
+                    # the checkpoint, are visible to clients holding this job.
+                    job['status'] = 'completed' if code == 0 else ('cancelled' if job.get('cancel_requested') else 'failed')
             threading.Thread(target=monitor, daemon=True).start()
             return job
 

@@ -4,9 +4,13 @@ import json
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit, parse_qs
+from urllib.parse import quote
+from email.parser import BytesParser
+from email import policy
 from edge_agent.core import EdgeCore
 from edge_agent.ur_workflow import URWorkflow
 from edge_agent.workstation import WorkstationStore
+from edge_agent.tactile_lab import TactileLab
 
 
 def handler_for(core, static_dir):
@@ -15,6 +19,8 @@ def handler_for(core, static_dir):
         core.workstation = WorkstationStore(core.data_root)
     if hasattr(core, 'load_external_config'):
         core.load_external_config(core.workstation.read().get('profile') or {})
+    if not hasattr(core, 'tactile_lab'):
+        core.tactile_lab = TactileLab(core)
     class Handler(SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=str(static_dir), **kwargs)
@@ -44,8 +50,22 @@ def handler_for(core, static_dir):
             if not url.path.startswith('/api/'):
                 return super().do_GET()
             try:
-                if url.path == '/api/health':
-                    response = dict(service='embodied-edge', version='0.2.4', hardware_commands='read-only',
+                if url.path == '/api/tactile-lab/records':
+                    response = dict(records=core.tactile_lab.list_records(), initialized=core.tactile_lab.has_records())
+                elif url.path.startswith('/api/tactile-lab/files/'):
+                    identifier = url.path.removeprefix('/api/tactile-lab/files/')
+                    record, raw = core.tactile_lab.download_file(identifier)
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/octet-stream')
+                    self.send_header('Content-Length', str(len(raw)))
+                    self.send_header('X-Content-Type-Options', 'nosniff')
+                    self.send_header('Cache-Control', 'private, no-store')
+                    self.send_header('Content-Disposition', "attachment; filename=download; filename*=UTF-8''" + quote(record['name'], safe=''))
+                    self.end_headers()
+                    self.wfile.write(raw)
+                    return
+                elif url.path == '/api/health':
+                    response = dict(service='embodied-edge', version='0.2.5', hardware_commands='read-only',
                                     capture_control='external-script-managed',
                                     data_root=str(core.data_root))
                 elif url.path == '/api/status':
@@ -92,20 +112,43 @@ def handler_for(core, static_dir):
                     return self.reply(404, dict(error='Unknown API route.'))
                 self.reply(200, response)
             except Exception as exc:
-                self.reply(400, dict(error=f'{type(exc).__name__}: {exc}'))
+                self.reply(getattr(exc, 'status', 400), dict(error=f'{type(exc).__name__}: {exc}'))
 
         def do_POST(self):
             if not self.allowed():
                 return
             try:
+                route = urlsplit(self.path).path
                 size = int(self.headers.get('Content-Length', '0'))
+                if route == '/api/tactile-lab/files':
+                    if not 0 < size <= 21 * 1024 * 1024:
+                        return self.reply(413, dict(error='单个文件不能超过 20 MiB。'))
+                    content_type = self.headers.get('Content-Type', '')
+                    if not content_type.lower().startswith('multipart/form-data;') or '\r' in content_type or '\n' in content_type:
+                        raise ValueError('文件上传需要 multipart/form-data。')
+                    message = BytesParser(policy=policy.default).parsebytes(
+                        b'Content-Type: ' + content_type.encode('ascii') + b'\r\nMIME-Version: 1.0\r\n\r\n' + self.rfile.read(size))
+                    if not message.is_multipart():
+                        raise ValueError('Invalid multipart boundary.')
+                    files = [part for part in message.iter_parts() if part.get_param('name', header='content-disposition') == 'file' and part.get_filename()]
+                    if len(files) != 1:
+                        raise ValueError('请上传一个原始数据文件。')
+                    part = files[0]
+                    record = core.tactile_lab.upload_file(part.get_filename(), part.get_payload(decode=True), part.get_content_type())
+                    return self.reply(201, dict(record=record))
                 if not 0 < size <= 8 * 1024 * 1024:
                     return self.reply(413, dict(error='Expected JSON body up to 8 MiB.'))
                 body = json.loads(self.rfile.read(size))
                 if not isinstance(body, dict):
                     raise ValueError('Expected JSON object.')
-                route = urlsplit(self.path).path
-                if route == '/api/devices/connect':
+                if route == '/api/tactile-lab/records':
+                    response = dict(record=core.tactile_lab.save_record(body['record']))
+                elif route == '/api/tactile-lab/restore':
+                    response = dict(record=core.tactile_lab.restore_record(body['id']))
+                elif route == '/api/tactile-lab/import-asset':
+                    with core.lock:
+                        response = core.tactile_lab.import_asset(body['asset_id'], body.get('episode_index', 0))
+                elif route == '/api/devices/connect':
                     with core.lock, core.ur_workflow.lock:
                         session = core.ur_workflow.capture
                         if body['device'] in ('rgb', 'tactile') and session and session.get('running'):
@@ -189,7 +232,22 @@ def handler_for(core, static_dir):
                     return self.reply(404, dict(error='Unknown API route.'))
                 self.reply(200, response)
             except Exception as exc:
-                self.reply(400, dict(error=f'{type(exc).__name__}: {exc}'))
+                self.reply(getattr(exc, 'status', 400), dict(error=f'{type(exc).__name__}: {exc}'))
+
+        def do_DELETE(self):
+            if not self.allowed():
+                return
+            url = urlsplit(self.path)
+            try:
+                if url.path == '/api/tactile-lab/records':
+                    identifier = parse_qs(url.query)['id'][0]
+                elif url.path.startswith('/api/tactile-lab/files/'):
+                    identifier = url.path.removeprefix('/api/tactile-lab/files/')
+                else:
+                    return self.reply(404, dict(error='Unknown API route.'))
+                self.reply(200, core.tactile_lab.delete_record(identifier))
+            except Exception as exc:
+                self.reply(getattr(exc, 'status', 400), dict(error=f'{type(exc).__name__}: {exc}'))
     return Handler
 
 

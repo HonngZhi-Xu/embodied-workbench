@@ -14,3 +14,18 @@ photos are not redistributed in this repository.
 Public repository visibility does not by itself apply the upstream MIT license
 to every newly authored workbench component. This handoff preserves existing
 license notices and does not assign a new project-wide license.
+
+## User-provided M3025 research application
+
+The tactile research client is adapted from the user's
+`M3025_Tactile_Workbench_Source.zip` export, original source revision
+`a4be0537773615ccdc322726b2b3a70c794d64ed`. Selected React UI and analysis
+helpers retain their source attribution in `tactile-research/SOURCE.json`.
+The supplied application has no top-level license granting a new project-wide
+license; this integration does not assign one. Third-party React, Lucide,
+esbuild and their dependencies retain their own package licenses.
+
+Changes include static client bundling, explicit browser-demo/local modes,
+platform-owned SQLite/file storage, platform asset import, separate raw-count
+and resultant-force units, numerical validation and an isolated platform view.
+The export's Site identity, auth scaffolding and cloud bindings are not reused.
