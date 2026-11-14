@@ -18,6 +18,19 @@ async function uwCopy(t){try{await navigator.clipboard.writeText(t);toast('已�
 const uwPhaseLabels={startup_wait:'等待现场启动确认',startup_sent:'已发送 Enter，等待设备初始化',initializing:'初始化设备',waiting_align:'等待实际 ALIGN 输入提示',aligning:'对齐中，等待脚本回执',alignment_review:'脚本已报告对齐完成，等待操作员确认',ready:'持续跟随 · 未录制',recording:'持续跟随 · 正在录制',awaiting_receipt:'命令已发送 · 等待脚本回执',exiting:'退出处理中 · 等待保存与清理',exited:'进程已退出 · 产物另行核查',error:'采集异常 · 请查看终端和结果',unknown:'状态未知 · 请核对原程序',uncontrolled:'只读观察 · 控制通道不可用'};
 function uwControllable(s=uwSession()){return s?.controllable!==false&&s?.control_available!==false}
 function uwAllowed(a){const s=uwSession();return !!s?.running&&uwControllable(s)&&!uwBusy&&(s.allowed_actions||[]).includes(a)}
+function uwCaptureGuide(s=uwSession()){
+  if(!s?.running)return '从“启动现场采集”开始；真实设备需要连接 Linux 本地工作台。';
+  if(!uwControllable(s))return '当前会话只有日志查看权限。请在现场核对原进程，不能从网页接管或重复启动。';
+  const allowed=s.allowed_actions||[];
+  if(allowed.includes('startup'))return '下一步：点击“确认现场准备，继续启动”，核对弹窗后发送 Enter。此时尚未开始录制。';
+  if(allowed.includes('align'))return '下一步：核对原程序的实际对齐提示和现场姿态，点击“确认姿态并执行对齐”，确认后发送 ALIGN。';
+  if(allowed.includes('ready'))return '下一步：现场核对姿态已对齐，再点击“确认实际对齐已完成”。';
+  if(allowed.includes('start'))return '下一步：点击“s ↵ 开始本条／下一条”录制；保存或丢弃后，再点 s 开始下一条。';
+  if(allowed.includes('finish'))return '正在录制：点击“↵ 保存本条”结束本条；需要退出时点击“q ↵ 保存有效片段并退出”。';
+  if(s.command_pending)return '已发送命令，等待原程序回执。请勿重复操作；若长时间无回执，请核对下方原程序输出。';
+  if(s.phase==='exiting')return '等待原程序完成保存、设备清理和退出。';
+  return '正在等待或尚未识别原程序提示，所以操作按钮暂不可用。若日志停在输入提示，请核对提示兼容性；仅刷新网页不会向脚本发送按键。';
+}
 function uwCapturePanel(){
   const s=uwSession(),running=!!s?.running,blocked=uwBusy||running||s?.phase==='uncontrolled';
   const key=(a,label,confirm=false,primary=false)=>`<button ${uwAllowed(a)?'':'disabled'} class="${primary?'primary':''}" onclick="${confirm?`uwConfirm('${a}','${esc(s?.id||'')}')`:`uwCaptureKey('${a}',false,'${esc(s?.id||'')}')`}">${label}</button>`;
@@ -25,9 +38,11 @@ function uwCapturePanel(){
   const saveLabels={queued:'已提交后台保存队列，尚未确认落盘',not_saved:'本条未保存',unconfirmed:'保存状态未确认',failed:'保存或采集失败',deletion_reported:'原程序报告删除完成',writer_stopped_pending_audit:'原程序报告写盘结束，等待数据检查'};
   const result=s?.save_state?{save_state:saveLabels[s.save_state]||s.save_state,episode_result:s.episode_result,delete_result:s.delete_result,result:s.result,quality_warning:s.quality_warning}:s?.save_status||s?.result_summary||s?.result;
   return `<div class="card-head"><h2>${uwPhaseLabels[s?.phase]||'采集未启动'}</h2>${badge(pMode==='demo'?'模拟交互':s&&!uwControllable(s)?'只读会话':running?'平台托管会话':'未运行',pMode==='demo'||s&&!uwControllable(s)?'amber':'')}</div>
+    <div class="uw-prompt" role="status"><strong>当前操作</strong><p>${esc(uwCaptureGuide(s))}</p><p class="subtle">请点击网页按钮发送指令。下方日志是只读输出，点击日志或在网页直接按 Enter / s 不会发送给原脚本。</p></div>
     ${running&&s?.aligned?'<div class="warning">原程序仍在持续遥操跟随。保存或丢弃一条数据不会让机械臂停止。</div>':''}
     ${s?.phase==='uncontrolled'?'<div class="warning">后端重启后的 PTY 不可恢复。这里只读显示原会话，请在原终端核对进程与设备状态；不要重复启动。</div>':''}
     ${s?.startup_prompt?`<div class="uw-prompt"><strong>原脚本现场确认提示</strong><pre>${esc(typeof s.startup_prompt==='string'?s.startup_prompt:s.prompt_text||'请核对下方终端实际提示')}</pre></div>`:''}
+    ${s?.align_prompt?`<div class="uw-prompt"><strong>原脚本对齐提示</strong><pre>${esc(s.prompt_text||'请核对下方终端实际提示')}</pre></div>`:''}
     <div class="uw-controls"><div><small>1 · 启动与对齐</small><div class="actions uw-keyboard"><button class="primary" ${blocked?'disabled':''} onclick="uwCaptureStart()">启动现场采集</button>${key('startup','确认现场准备，继续启动',true)}${key('align','确认姿态并执行对齐',true)}${key('ready','确认实际对齐已完成',true)}</div></div>
     <div><small>2 · 连续多条录制</small><div class="actions uw-keyboard">${key('start','s ↵ 开始本条／下一条',false,true)}${key('finish','↵ 保存本条')}${key('discard','d ↵ 丢弃当前条',true)}${key('delete_last','u ↵ 删除最近已保存的一条',true)}</div></div>
     <div><small>3 · 正常退出</small><div class="actions uw-keyboard">${key('quit','q ↵ 保存有效片段并退出',true)}</div></div></div>
@@ -36,7 +51,7 @@ function uwCapturePanel(){
     ${s?.message?`<p>${esc(s.message)}</p>`:''}${result?`<details class="ux-advanced"><summary>保存回执与最终结果（以原程序为准）</summary><pre class="log">${esc(typeof result==='string'?result:JSON.stringify(result,null,2))}</pre></details>`:''}
     ${s?.dataset_path||s?.output_dir?`<p class="uw-path">原程序输出：${esc(s.dataset_path||s.output_dir)} <a href="#edge-data">查看已登记产物 →</a></p>`:''}
     ${s?.run_manifest?`<details class="ux-advanced"><summary>原程序运行清单：实际设备绑定与环境（只读）</summary><pre class="log">${esc(JSON.stringify(s.run_manifest,null,2))}</pre></details>`:''}
-    <pre class="log uw-terminal" id="uw-terminal">${esc(log||'等待原脚本输出；平台不会自动发送 Enter 或 ALIGN。')}</pre>
+    <p class="subtle">原程序输出（只读日志，请使用上方操作按钮）</p><pre class="log uw-terminal" id="uw-terminal">${esc(log||'等待原脚本输出；平台不会自动发送 Enter 或 ALIGN。')}</pre>
     <details class="ux-advanced"><summary>异常处理：中断／终止进程</summary><p>这些是软件进程操作，不是硬件急停。当前未保存片段会被丢弃，之前已保存数据保留；正常退出请使用上面的 q。</p><div class="actions">${['interrupt','terminate','kill'].map((m,i)=>`<button ${!running||!uwControllable(s)||uwBusy?'disabled':''} onclick="uwConfirm('${m}','${esc(s?.id||'')}')">${['中断采集进程（SIGINT）','发送终止信号（SIGTERM）','强制结束进程（SIGKILL）'][i]}</button>`).join('')}</div></details>`;
 }
 function uwCaptureSettings(){return `<div class="uw-form">${uwInput('capture-script','采集脚本绝对路径','text',uwConfig.capture_script)}<div><label for="uw-capture-mode">本次采集模式</label><select id="uw-capture-mode" onchange="uwUpdateCaptureDraft()"><option value="rgb_tactile" ${uwConfig.capture_mode==='rgb_tactile'?'selected':''}>三路相机＋触觉（原命令默认）</option><option value="rgb_only" ${uwConfig.capture_mode==='rgb_only'?'selected':''}>仅三路相机（--no-tactile）</option></select></div>${uwInput('resume-path','接续已有数据路径（选填）','text',uwConfig.resume_path)}</div><p class="subtle">模式只决定本次参数。接续需通过已有数据模式检查，最终是否接受由原程序判断。</p><pre class="log" id="uw-capture-command">${esc(uwCaptureCommand())}</pre>`}

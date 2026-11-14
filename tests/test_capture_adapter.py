@@ -62,6 +62,37 @@ def test_multiple_prompts_in_same_chunk_are_processed_in_order():
     assert s['phase'] == 'waiting_align' and allowed_actions(s) == ['align']
 
 
+def test_live_r3_chinese_consent_prompt_requires_explicit_startup(monkeypatch):
+    workflow, writes = runner(monkeypatch)
+    observer = workflow.capture_observer
+    observer.terminal('示教器须健康、远程模式、程序已停止。扶稳 GELLO，输入 ALIGN 执行初始慢速对齐。\r\n')
+    observer.terminal('s+Enter 开始一条；Enter 保存本条（仍在遥操跟随）。\r\n')
+    assert allowed_actions(workflow.capture) == [] and writes == []
+    observer.terminal('确认已单独同意本次40N/18N夹爪参数、现场已准备好，按Ent')
+    assert allowed_actions(workflow.capture) == []
+    observer.terminal('er启动（其他输入取消）：')
+    assert allowed_actions(workflow.capture) == ['startup'] and writes == []
+    assert not workflow.capture['aligned']
+    with pytest.raises(ValueError):
+        workflow.send_key('startup', 'UR-test', False, 'r3-unconfirmed')
+    workflow.send_key('startup', 'UR-test', True, 'r3-startup-request')
+    observer.terminal(' ')
+    assert writes == [b'\n'] and allowed_actions(workflow.capture) == []
+    observer.terminal('\r\nType ALIGN to confirm alignment: ')
+    assert allowed_actions(workflow.capture) == ['align']
+
+
+@pytest.mark.parametrize('text', [
+    '说明：确认已单独同意本次40N/18N夹爪参数、现场已准备好，按Enter启动（其他输入取消）：',
+    '确认已单独同意本次40N/18N夹爪参数、现场已准备好，按Enter启动（其他输入取消）',
+    '确认已单独同意本次40N/18N夹爪参数、现场未准备好，按Enter启动（其他输入取消）：',
+])
+def test_live_r3_help_or_incomplete_confirmation_does_not_enable_keys(text):
+    s = session()
+    CaptureObserver(s).terminal(text)
+    assert allowed_actions(s) == []
+
+
 def test_rejected_alignment_and_reprompt_in_one_read_remains_actionable():
     s=session(); s.update(startup_confirmed=True, alignment_request_sent=True, phase='aligning')
     observer=CaptureObserver(s)
@@ -208,13 +239,14 @@ def test_resume_old_log_prefix_cannot_complete_this_alignment(tmp_path):
 
 
 @pytest.mark.skipif(os.name != 'posix', reason='The collector uses Linux PTY; unit parser/control tests run on Windows too')
-def test_platform_fake_collector_full_pty_flow(tmp_path):
+@pytest.mark.parametrize('prompt_style', ['english', 'live-r3'])
+def test_platform_fake_collector_full_pty_flow(tmp_path, prompt_style):
     import shlex
     fixture=Path(__file__).parent/'fixtures/fake_live_capture.py'
     script=tmp_path/'project/experiments/start_live_follow_local.sh'
     script.parent.mkdir(parents=True)
     output=tmp_path/'external/actual-run'
-    script.write_text('#!/bin/bash\nexec '+shlex.quote(sys.executable)+' -u '+shlex.quote(str(fixture))+' '+shlex.quote(str(output))+'\n')
+    script.write_text('#!/bin/bash\nexec '+shlex.quote(sys.executable)+' -u '+shlex.quote(str(fixture))+' '+shlex.quote(str(output))+' '+shlex.quote(prompt_style)+'\n')
     assets=SimpleNamespace(roots=(tmp_path/'external',), register=lambda p,session:None)
     core=SimpleNamespace(data_root=tmp_path/'platform',assets=assets,lock=threading.RLock(),jobs={},capture=None)
     workflow=URWorkflow(core)
