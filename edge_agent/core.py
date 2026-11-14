@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 from edge_agent.devices import DeviceHub
 from edge_agent.camera_guard import CameraGuard
+from edge_agent.assets import ExternalAssets, DEFAULT_EXTERNAL_ROOTS
 
 
 class EdgeCore:
@@ -24,8 +25,22 @@ class EdgeCore:
         self.capture = None
         self.jobs = {}
         self.processes = {}
+        self.assets = ExternalAssets(self.data_root, active_provider=lambda: getattr(getattr(self, 'ur_workflow', None), 'capture', None))
+
+    def load_external_config(self, profile=None):
+        self.assets.configure((profile or {}).get('external_data_roots', DEFAULT_EXTERNAL_ROOTS))
+
+    def resolve_training_dataset(self, identifier):
+        path = self.dataset_path(identifier)
+        if self.data_root not in path.parents:
+            return self.assets.training_path(identifier)
+        if self.capture is not None:
+            raise ValueError('平台仍在采集，先保存并退出后再训练。')
+        return path
 
     def dataset_path(self, relative):
+        if str(relative).startswith('external-') or Path(relative).is_absolute():
+            return self.assets.resolve(relative)
         path = (self.data_root / relative).resolve()
         if self.data_root not in path.parents or not path.is_dir():
             raise ValueError('Dataset must be an existing directory inside the configured data root.')
@@ -33,7 +48,10 @@ class EdgeCore:
 
     def audit(self, relative):
         from diffusion_policy.common.gello_zarr import inspect_dataset
-        return inspect_dataset(self.dataset_path(relative), check_chunks=True)
+        path = self.dataset_path(relative)
+        if self.data_root not in path.parents:
+            return self.assets.audit(relative)
+        return inspect_dataset(path, check_chunks=True)
 
     def datasets(self):
         from diffusion_policy.common.gello_zarr import inspect_dataset
@@ -47,7 +65,7 @@ class EdgeCore:
                 except Exception as exc:
                     result.append(dict(id=path.relative_to(self.data_root).as_posix(), valid=False,
                                        name=path.stem, errors=[str(exc)], arrays={}))
-        return result
+        return result + self.assets.list()
 
     def start_capture(self, tactile=False, require_camera_check=False, expected_cameras=None):
         with self.lock:
@@ -164,7 +182,7 @@ class EdgeCore:
         from diffusion_policy.common.replay_buffer import ReplayBuffer
         if len(set(names)) < 2:
             raise ValueError('Select at least two distinct datasets for a train/validation split.')
-        paths = [self.dataset_path(name) for name in names]
+        paths = [self.resolve_training_dataset(name) for name in names]
         for path in paths:
             require_valid(path, check_chunks=True)
         roots = [zarr.open_group(str(p), mode='r') for p in paths]
@@ -186,6 +204,7 @@ class EdgeCore:
     def start_training(self, request):
         from hydra import compose, initialize_config_dir
         from omegaconf import OmegaConf
+        training_path = self.resolve_training_dataset(request['dataset'])
         report = self.audit(request['dataset'])
         if not report['valid']:
             raise ValueError('; '.join(report['errors']))
@@ -227,7 +246,7 @@ class EdgeCore:
             with initialize_config_dir(version_base=None, config_dir=str(self.workspace/'diffusion_policy/config')):
                 cfg = compose(config_name='train_gello_dp')
             cfg.task.shape_meta = dict(obs=obs, action=dict(shape=[7]))
-            cfg.task.dataset.dataset_path = str(self.dataset_path(request['dataset']))
+            cfg.task.dataset.dataset_path = str(training_path)
             cfg.training.device, cfg.training.num_epochs = device, epochs
             cfg.dataloader.num_workers = cfg.val_dataloader.num_workers = 0
             cfg.dataloader.batch_size = cfg.val_dataloader.batch_size = 2

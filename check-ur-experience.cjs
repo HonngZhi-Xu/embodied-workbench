@@ -1,46 +1,19 @@
-const fs=require('fs');
-const vm=require('vm');
-const assert=require('assert');
-const storage=new Map();
-function browser() {
-  const elements=new Map();
-  const element=key=>{
-    if(!elements.has(key)) elements.set(key,{innerHTML:'',value:'',checked:false,style:{},
-      classList:{toggle(){}},insertAdjacentHTML(_position,html){this.innerHTML+=html},showModal(){},close(){}});
-    return elements.get(key);
-  };
-  const context={console,document:{querySelector:element,querySelectorAll:()=>[]},location:{hash:'#ur5e'},
-    window:{addEventListener(){},scrollTo(){}},localStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v)},
-    setInterval(){},setTimeout(){},clearTimeout(){},URL,Blob,AbortSignal};
-  vm.createContext(context);
-  for(const file of ['app.js','platform.js','camera-guard.js','ur-workflow.js','ur-experience.js'])
-    vm.runInContext(fs.readFileSync('dist/'+file,'utf8'),context);
-  return {element,run:code=>vm.runInContext(code,context)};
-}
+const fs=require('fs'),vm=require('vm'),assert=require('assert');const storage=new Map();
+function browser(){const els=new Map();const element=k=>{if(!els.has(k))els.set(k,{innerHTML:'',textContent:'',value:'',checked:false,style:{},classList:{toggle(){}},insertAdjacentHTML(_p,h){this.innerHTML+=h},showModal(){},close(){}});return els.get(k)};const ctx={console,document:{querySelector:element,querySelectorAll:()=>[]},location:{hash:'#ur5e'},window:{addEventListener(){},scrollTo(){}},localStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v)},setInterval(){},setTimeout(){},clearTimeout(){},URL,Blob,AbortSignal};vm.createContext(ctx);for(const f of ['app.js','platform.js','camera-guard.js','ur-workflow.js','ur-experience.js'])vm.runInContext(fs.readFileSync('dist/'+f,'utf8'),ctx);return{element,run:c=>vm.runInContext(c,ctx)}}
 (async()=>{
-  const first=browser();
-  assert(first.element('#app').innerHTML.includes('先配置你的工位'));
-  first.run("location.hash='#ur-settings';render()");
-  const draft=first.run('uxDraft()');
-  for(const [key,value] of Object.entries(draft)) first.element('#ux-'+key).value=String(value);
-  await first.run('uxSaveProfile()');
-  first.run("location.hash='#ur5e';render()");
-  assert(first.element('#app').innerHTML.includes('选择今天要做的工作'));
-  const nav=first.element('#nav').innerHTML;
-  assert(nav.indexOf('href="#ur-live"')<nav.indexOf('href="#edge-data"'));
-  assert(nav.indexOf('href="#edge-data"')<nav.indexOf('href="#edge-train"'));
-  assert(nav.indexOf('href="#edge-train"')<nav.indexOf('工位设置'));
-  const second=browser();
-  assert(second.element('#app').innerHTML.includes('选择今天要做的工作'));
-  second.run("location.hash='#ur-live';render()");
-  assert(!second.element('#app').innerHTML.includes('采集脚本绝对路径'));
-  assert(second.element('#app').innerHTML.includes('u ↵ 进入下一条'));
-  second.run("location.hash='#ur-settings';render()");
-  assert(second.element('#app').innerHTML.includes('配置已保存'));
-  assert(!second.element('#app').innerHTML.includes('id="ux-name"'));
-  second.run("location.hash='#edge-train';render()");
-  assert(second.element('#app').innerHTML.includes('高级训练参数'));
-  second.run("pMode='live';location.hash='#ur5e';render()");
-  assert(second.element('#app').innerHTML.includes('先配置你的工位'));
-  console.log('PASS first setup, saved reload, primary navigation, daily capture and demo/live isolation.');
-})().catch(error=>{console.error(error);process.exitCode=1});
+  const first=browser();assert(first.element('#app').innerHTML.includes('先配置你的工位'));first.run("location.hash='#ur-settings';render()");const d=first.run('uxDraft()');
+  for(const [k,v] of Object.entries(d))first.element('#ux-'+k).value=String(v);first.element('#ux-capture-mode').value='rgb_tactile';first.element('#ux-resume-path').value='';first.element('#ux-external-roots').value='/home/zaq/runtime_logs/live_follow_capture';
+  await first.run('uxSaveProfile()');assert.equal(first.run('uxProfile().capture_mode'),'rgb_tactile');assert.equal(first.run('uxProfile().external_data_roots[0]'),'/home/zaq/runtime_logs/live_follow_capture');
+  first.run("location.hash='#ur5e';render()");assert(first.element('#app').innerHTML.includes('原始数据登记'));const nav=first.element('#nav').innerHTML;assert(nav.indexOf('href="#ur-live"')<nav.indexOf('href="#edge-data"'));assert(nav.indexOf('href="#edge-data"')<nav.indexOf('href="#edge-train"'));
+  const second=browser();assert(second.element('#app').innerHTML.includes('原始数据登记'));second.run("location.hash='#ur-live';render()");const capture=second.element('#app').innerHTML;assert(capture.includes('实时画面在本机预览窗口'));assert(capture.includes('u ↵ 删除最近已保存的一条'));assert(capture.includes('q ↵ 保存有效片段并退出'));assert(!capture.includes('u 进入下一条'));
+  second.run("location.hash='#ur-settings';render()");assert(second.element('#app').innerHTML.includes('配置已保存'));assert(!second.element('#app').innerHTML.includes('id="ux-name"'));
+  second.run("location.hash='#edge-train';render()");assert(second.element('#app').innerHTML.includes('高级训练参数'));assert(second.element('#app').innerHTML.includes('尚未选择检查通过的数据'));
+  second.run("uxAssets=[{id:'active',path:'/raw/active.zarr',active:true,training_ready:true},{id:'incomplete',path:'/raw/incomplete.zarr',active:false,training_ready:false},{id:'good',path:'/raw/good.zarr',active:false,training_ready:true,production_training_qualified:true}]");
+  second.run('uxSelectAsset(0)');assert.equal(second.run('uwConfig.asset_id'),'');second.run('uxSelectAsset(1)');assert.equal(second.run('uwConfig.asset_id'),'');second.run('uxSelectAsset(2)');assert.equal(second.run('uwConfig.asset_id'),'good');assert.equal(second.run('uwConfig.dataset'),'/raw/good.zarr');
+  assert(!second.run("uxImage('javascript:alert(1)')").includes('<img'));assert(second.run("uxImage('data:image/png;base64,YWJj')").includes('<img'));
+  second.run("pMode='live';location.hash='#ur5e';render()");assert(second.element('#app').innerHTML.includes('先配置你的工位'));
+  second.run("uwLive.capture={id:'live',running:true};globalThis.deviceCalls=0;pApi=async()=>{deviceCalls++;return {}};");await second.run("pConnect('rgb')");assert.equal(second.run('deviceCalls'),0);
+  const refreshed=browser();refreshed.run("location.hostname='127.0.0.1';globalThis.calls=[];pApi=async(path,body)=>{calls.push({path,body});if(path==='health')return{service:'embodied-edge'};if(path==='status')return{devices:{},capture:{active:false},jobs:[]};if(path==='workstation')return{profile:{name:'Saved station',capture_script:'/saved/start_live_follow_local.sh',project:'/training',conda_env:'robodiff',output_root:'/out',external_data_roots:['/data'],capture_mode:'rgb_tactile'}};if(path==='ur-workflow/status')return{capture:{id:'persistent-session',running:true,controllable:true,phase:'recording',aligned:true,allowed_actions:['finish','discard','quit'],log:[]},jobs:[]};if(path==='datasets')return[];throw Error(path)}");
+  await refreshed.run('uxAutoResume()');assert.equal(refreshed.run('pMode'),'live');assert.equal(refreshed.run('uwSession().id'),'persistent-session');assert(refreshed.run('calls.every(c=>c.body===undefined)'));assert(!refreshed.run("calls.some(c=>c.path.includes('/start')||c.path.includes('/key')||c.path.includes('devices/'))"));
+  console.log('PASS persisted capture mode/data roots, primary navigation, local-preview boundary, registered asset selection, active/incomplete training guards, image safety and occupied-device guard.');
+})().catch(e=>{console.error(e);process.exitCode=1});

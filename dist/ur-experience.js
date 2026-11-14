@@ -1,124 +1,66 @@
-/* Workstation setup once; capture, data and training are the daily workflow. */
-const uxProfileFields = [
-  ['name','工位名称'], ['robot_ip','UR5e IP（独立状态连接）'], ['gripper','二指夹爪型号'],
-  ['camera_0','腕部 D435 序列号'], ['camera_1','侧视一 D435 序列号'], ['camera_2','侧视二 D435 序列号'],
-  ['capture_script','GELLO 采集脚本'], ['project','训练项目目录'],
-  ['conda_env','训练 Conda 环境'], ['output_root','训练结果根目录'], ['port','触觉串口（选填）']
-];
-let uxProfiles = {demo:null, live:null}, uxEditing = false, uxSaving = false;
-for (const mode of ['demo','live']) {
-  try { uxProfiles[mode] = JSON.parse(localStorage.getItem('ur-workstation-'+mode)); } catch {}
-}
-const uxProfile = () => uxProfiles[pMode];
-function uxApplyProfile() {
-  const profile = uxProfile();
-  if (!profile) return;
-  for (const key of ['capture_script','project','conda_env','output_root']) uwConfig[key] = profile[key];
-  pConfig = {...pConfig,robotIp:profile.robot_ip,serial:profile.camera_1,port:profile.port,address:profile.address,baud:profile.baud};
-  uwPersist();
-}
-function uxDraft() {
-  return uxProfile() || {name:'UR5e 抓放工位',robot_ip:pConfig.robotIp||'',gripper:'二指夹爪',
-    camera_0:'',camera_1:pConfig.serial||'',camera_2:'',capture_script:uwConfig.capture_script,
-    project:uwConfig.project,conda_env:uwConfig.conda_env,output_root:uwConfig.output_root,
-    port:pConfig.port||'',address:Number(pConfig.address)||1,baud:Number(pConfig.baud)||921600};
-}
-function uxField(key,label,value,type='text') {
-  return `<div><label for="ux-${key}">${label}</label><input id="ux-${key}" type="${type}" value="${esc(String(value??''))}"></div>`;
-}
-function uxSummary() {
-  const profile = uxProfile();
-  if (!profile) return '<div class="warning">先完成一次工位配置，保存硬件信息与运行环境。<a href="#ur-settings">去配置工位 →</a></div>';
-  return `<div class="ux-profile-strip"><div><strong>${esc(profile.name)}</strong><span>UR5e · 两路侧视 D435＋一路腕部 D435 · ${esc(profile.conda_env)}</span></div><a href="#ur-settings">工位设置</a></div>`;
-}
-function uxSetupGate() {
-  return pHead('先配置你的工位','保存硬件信息和运行环境，然后开始日常数采与训练。')+
-    '<section class="card ux-welcome"><div class="eyebrow">首次使用</div><h2>一次配置，日常直接开工</h2><p>填写机器人、三路相机、采集脚本与训练环境，保存为这个工位的固定配置。</p><a class="ux-primary-link" href="#ur-settings">配置工位 →</a><p class="subtle">已有版本中的设备信息会带入草稿，确认后保存。演示配置与本地实机配置分别保存。</p></section>';
-}
-function uxRequireProfile() {
-  if (uxProfile()) return true;
-  toast('请先保存工位配置'); location.hash='ur-settings'; return false;
-}
-function uxNavLink(id,name,icon) {
-  return `<a href="#${id}" data-page="${id}"><span class="ux-nav-icon">${icon}</span>${name}</a>`;
-}
-$('#nav').innerHTML = '<div class="nav-label">UR5e · 日常工作</div>'+
-  [['ur5e','工作台','⌂'],['ur-live','数采','◉'],['edge-data','数据','▤'],['edge-train','训练','▷']].map(x=>uxNavLink(...x)).join('')+
-  '<div class="nav-label">工位设置</div>'+uxNavLink('ur-settings','硬件与环境','⚙')+
-  uxNavLink('camera-check','相机基准','▣')+
-  '<details class="ux-other"><summary>其他项目与工具</summary>'+pages.filter(([id])=>!['ur5e','ur-live','edge-data','edge-train','sensors','camera-check','ur-settings'].includes(id)).map(([id,name])=>uxNavLink(id,name,'·')).join('')+'</details>';
-pages.push(['ur-settings','工位设置']);
-for (const [id,name] of [['ur5e','工作台'],['ur-live','数采'],['edge-data','数据'],['edge-train','训练']]) pages.find(p=>p[0]===id)[1]=name;
-pages.find(p=>p[0]==='sensors')[1]='工位设置';
-
-views['ur-settings'] = () => {
-  const profile=uxProfile(), draft=uxDraft();
-  const editor = !profile || uxEditing;
-  const body = editor ? `<div class="uw-form">${uxProfileFields.map(([key,label])=>uxField(key,label,draft[key])).join('')}${uxField('address','触觉设备地址',draft.address,'number')}${uxField('baud','触觉波特率',draft.baud,'number')}</div>
-    <p class="subtle">相机序列号用于记录通道绑定，现场 GELLO 相机服务也需采用同样的绑定。未填序列号的通道由现场脚本管理。</p>
-    <div class="actions"><button class="primary" ${uxSaving?'disabled':''} onclick="uxSaveProfile()">${uxSaving?'保存中…':'保存工位配置'}</button>${profile?'<button onclick="uxEditing=false;render()">取消修改</button>':''}</div>` :
-    `<dl class="ux-profile-list">${uxProfileFields.map(([key,label])=>`<div><dt>${label}</dt><dd>${esc(profile[key]||'未填写')}</dd></div>`).join('')}</dl><div class="actions"><button onclick="uxEditing=true;render()">修改工位配置</button><a href="#ur-live">进入数采 →</a></div>`;
-  return pHead('工位设置','硬件与运行环境保存在工位中，设备更换或路径变化时再修改。',pMode==='live'?'<button onclick="uxReloadProfile(true)">重新读取已保存配置</button>':'')+
-    `<div class="grid2"><section class="card fields"><div class="card-head"><h2>${profile?'当前工位':'首次配置'}</h2>${badge(profile?'配置已保存':'待配置',profile?'':'amber')}</div>${body}</section>
-    <section class="card"><h2>配置后的使用顺序</h2><ol><li>进入数采，核对相机与现场状态。</li><li>启动采集并完成 ALIGN，按条录制。</li><li>进入数据，检查片段并选择训练集。</li><li>进入训练，提交实验并查看结果。</li></ol><p class="subtle">${pMode==='demo'?'演示配置保存在当前浏览器。':'实机配置写入本地服务数据目录的 workstation.json。'}保存配置后，设备连接状态仍以实际数据流为准。</p><a href="#camera-check">建立或复查相机基准 →</a></section>
-    ${profile?`<section class="card wide"><details><summary>设备连接与诊断</summary><div class="grid2 ux-diagnostics"><div><h3>UR5e 状态</h3><button onclick="pConnect('robot')">连接只读状态</button><button onclick="pDisconnect('robot')">断开</button><div id="p-robot-values">${pRobotReadings()}</div></div><div><h3>D435 独立预览</h3><p class="subtle">相机已被 GELLO 占用时，查看 GELLO 画面。</p><button onclick="pConnect('rgb')">连接侧视一预览</button><button onclick="pDisconnect('rgb')">断开</button><div id="p-rgb-live">${pRgb()}</div></div><div><h3>M3025 触觉</h3><button onclick="pConnect('tactile')">连接触觉</button><button onclick="pDisconnect('tactile')">断开</button><div id="p-touch-live">${pHeatmap()}</div></div><div id="p-device-errors">${pDiagnostics()}</div></div></details></section>`:''}</div>`;
+/* Configure once. Daily tasks use the original capture program and a read-only asset index. */
+const uxProfileFields=[['name','工位名称'],['robot_ip','UR5e IP（独立只读诊断）'],['gripper','二指夹爪型号（记录）'],['camera_0','腕部 D435 序列号（记录）'],['camera_1','侧视一 D435 序列号（记录）'],['camera_2','侧视二 D435 序列号（记录）'],['capture_script','GELLO 原采集脚本'],['project','原训练项目目录'],['conda_env','训练 Conda 环境'],['output_root','训练结果根目录'],['port','触觉串口（独立诊断）']];
+let uxProfiles={demo:null,live:null},uxEditing=false,uxSaving=false,uxAssets=[],uxAssetsBusy=false,uxReplayAsset=null,uxReplayVersion=0;
+for(const mode of ['demo','live']){try{uxProfiles[mode]=JSON.parse(localStorage.getItem('ur-workstation-'+mode))}catch{}}
+const uxProfile=()=>uxProfiles[pMode];
+const uxCaptureOccupied=()=>!!uwSession()?.running||uwSession()?.phase==='uncontrolled';
+function uxApplyProfile(){const p=uxProfile();if(!p)return;for(const k of ['capture_script','project','conda_env','output_root'])uwConfig[k]=p[k];uwConfig.capture_mode=p.capture_mode||'rgb_tactile';uwConfig.resume_path=p.resume_path||'';pConfig={...pConfig,robotIp:p.robot_ip,serial:p.camera_1,port:p.port,address:p.address,baud:p.baud};uwPersist()}
+function uxDraft(){return {...{name:'UR5e 抓放工位',robot_ip:pConfig.robotIp||'',gripper:'二指夹爪',camera_0:'',camera_1:pConfig.serial||'',camera_2:'',capture_script:uwConfig.capture_script,project:uwConfig.project,conda_env:uwConfig.conda_env,output_root:uwConfig.output_root,port:pConfig.port||'',address:Number(pConfig.address)||1,baud:Number(pConfig.baud)||921600,capture_mode:'rgb_tactile',resume_path:'',external_data_roots:['/home/zaq/runtime_logs/live_follow_capture']},...uxProfile()}}
+function uxField(k,label,value,type='text'){return `<div><label for="ux-${k}">${label}</label><input id="ux-${k}" type="${type}" value="${esc(String(value??''))}"></div>`}
+function uxSummary(){const p=uxProfile();return p?`<div class="ux-profile-strip"><div><strong>${esc(p.name)}</strong><span>三路 D435 · ${esc(p.conda_env)} · 原程序配置保持独立</span></div><a href="#ur-settings">工位设置</a></div>`:'<div class="warning">先保存工位路径、数据根目录与运行环境。<a href="#ur-settings">配置工位 →</a></div>'}
+function uxSetupGate(){return pHead('先配置你的工位','保存一次平台运行路径，日常进入数采、数据和训练。')+'<section class="card ux-welcome"><div class="eyebrow">首次使用</div><h2>配置好，再开始工作</h2><p>平台只管理原采集程序。设备绑定、解释器与 PYTHONPATH 仍由原项目管理。</p><a class="ux-primary-link" href="#ur-settings">配置工位 →</a><p class="subtle">演示配置和本地配置分别保存；平台里的设备信息不会自动修改原脚本硬件配置。</p></section>'}
+function uxRequireProfile(){if(uxProfile())return true;toast('请先保存工位配置');location.hash='ur-settings';return false}
+function uxNavLink(id,name,icon){return `<a href="#${id}" data-page="${id}"><span class="ux-nav-icon">${icon}</span>${name}</a>`}
+$('#nav').innerHTML='<div class="nav-label">UR5e · 日常工作</div>'+[['ur5e','工作台','⌂'],['ur-live','数采','◉'],['edge-data','数据','▤'],['edge-train','训练','▷']].map(x=>uxNavLink(...x)).join('')+'<div class="nav-label">工位设置</div>'+uxNavLink('ur-settings','硬件与环境','⚙')+uxNavLink('camera-check','相机基准','▣')+'<details class="ux-other"><summary>其他项目与工具</summary>'+pages.filter(([id])=>!['ur5e','ur-live','edge-data','edge-train','sensors','camera-check','ur-settings'].includes(id)).map(([id,name])=>uxNavLink(id,name,'·')).join('')+'</details>';
+pages.push(['ur-settings','工位设置']);for(const [id,name] of [['ur5e','工作台'],['ur-live','数采'],['edge-data','数据'],['edge-train','训练']])pages.find(p=>p[0]===id)[1]=name;pages.find(p=>p[0]==='sensors')[1]='工位设置';
+views['ur-settings']=()=>{
+  const p=uxProfile(),d=uxDraft(),editor=!p||uxEditing,busy=uxCaptureOccupied();
+  const body=editor?`<div class="uw-form">${uxProfileFields.map(([k,l])=>uxField(k,l,d[k])).join('')}${uxField('address','触觉设备地址（独立诊断）',d.address,'number')}${uxField('baud','触觉波特率（独立诊断）',d.baud,'number')}<div><label for="ux-capture-mode">默认采集模式</label><select id="ux-capture-mode"><option value="rgb_tactile" ${d.capture_mode==='rgb_tactile'?'selected':''}>三路相机＋触觉（原命令）</option><option value="rgb_only" ${d.capture_mode==='rgb_only'?'selected':''}>仅三路相机（--no-tactile）</option></select></div>${uxField('resume-path','默认接续数据路径（选填）',d.resume_path)}<div><label for="ux-external-roots">外部数据根目录（每行一个）</label><textarea id="ux-external-roots" rows="3">${esc((d.external_data_roots||[]).join('\n'))}</textarea></div></div><p class="subtle">这些字段保存平台运行路径、数据读取范围和设备记录，不会改写原 GELLO 的 IP、相机序列号、串口、解释器或依赖。原程序实际绑定以运行清单为准。</p><div class="actions"><button class="primary" ${uxSaving||busy?'disabled':''} onclick="uxSaveProfile()">${uxSaving?'保存中…':'保存工位配置'}</button>${p?'<button onclick="uxEditing=false;render()">取消修改</button>':''}</div>`:`<dl class="ux-profile-list">${uxProfileFields.map(([k,l])=>`<div><dt>${l}</dt><dd>${esc(p[k]||'未填写')}</dd></div>`).join('')}<div><dt>默认采集模式</dt><dd>${p.capture_mode==='rgb_only'?'仅三路相机':'三路相机＋触觉'}</dd></div><div><dt>外部数据范围</dt><dd>${esc((d.external_data_roots||[]).join('\n'))}</dd></div></dl><div class="actions"><button ${busy?'disabled':''} onclick="uxEditing=true;render()">修改工位配置</button><a href="#ur-live">进入数采 →</a></div>`;
+  return pHead('工位设置','平台配置只作用于外部管理层，不代替原程序配置。',pMode==='live'?'<button onclick="uxReloadProfile(true)">重新读取配置</button>':'')+`<div class="grid2"><section class="card fields"><div class="card-head"><h2>${p?'当前工位':'首次配置'}</h2>${badge(p?'配置已保存':'待配置',p?'':'amber')}</div>${body}</section><section class="card"><h2>运行环境与预览</h2><p>从原脚本可用的桌面终端启动本地服务，继承 DISPLAY，必要时继承 XAUTHORITY。保留原程序自己的工作目录、解释器与 PYTHONPATH。</p><ol><li>启动原程序并现场确认。</li><li>对齐后连续多条录制。</li><li>q 正常退出，等待保存与清理。</li><li>原始数据只读登记，检查后选择训练。</li></ol><p>实时三相机／触觉画面目前在原程序本机窗口，网页不重复打开被占用的设备。</p></section>${p?`<section class="card wide"><details><summary>独立设备诊断（采集时禁止使用）</summary><p>仅在原程序未占用设备时打开。独立预览不是原脚本实时视频源，也不会改变原项目配置。</p><div class="actions">${[['robot','UR5e 只读状态'],['rgb','D435 独立预览'],['tactile','M3025 独立诊断']].map(([id,label])=>`<button ${busy?'disabled':''} onclick="pConnect('${id}')">${label}</button><button onclick="pDisconnect('${id}')">断开 ${label}</button>`).join('')}</div><div id="p-device-errors">${pDiagnostics()}</div></details></section>`:''}</div>`;
 };
 views.sensors=views['ur-settings'];
-async function uxSaveProfile() {
-  if (uxSaving) return;
-  const profile=Object.fromEntries(uxProfileFields.map(([key])=>[key,$('#ux-'+key).value.trim()]));
-  profile.address=Number($('#ux-address').value); profile.baud=Number($('#ux-baud').value);
-  if(['name','capture_script','project','conda_env','output_root'].some(k=>!profile[k]))return toast('请填写工位名称、采集脚本和训练环境');
-  uxSaving=true;
-  try {
-    if(pMode==='live') {
-      const result=await pApi('workstation',{profile,expected_revision:uxProfile()?.revision||null});
-      uxProfiles.live=result.profile;
-    } else uxProfiles.demo={...profile,revision:'demo-'+Date.now(),saved_at:Date.now()/1000};
-    localStorage.setItem('ur-workstation-'+pMode,JSON.stringify(uxProfile()));
-    uxApplyProfile(); uxEditing=false; toast('工位已保存，日常可直接进入数采');
-  } catch(e){toast(e.message)} finally{uxSaving=false;render()}
+async function uxSaveProfile(){
+  if(uxSaving||uxCaptureOccupied())return;const p=Object.fromEntries(uxProfileFields.map(([k])=>[k,$('#ux-'+k).value.trim()]));
+  p.address=Number($('#ux-address').value);p.baud=Number($('#ux-baud').value);p.capture_mode=$('#ux-capture-mode').value;p.resume_path=$('#ux-resume-path').value.trim();p.external_data_roots=$('#ux-external-roots').value.split(/\r?\n/).map(v=>v.trim()).filter(Boolean);
+  if(['name','capture_script','project','conda_env','output_root'].some(k=>!p[k])||!p.external_data_roots.length)return toast('请填写工位、运行路径和至少一个数据根目录');uxSaving=true;
+  try{if(pMode==='live'){const r=await pApi('workstation',{profile:p,expected_revision:uxProfile()?.revision||null});uxProfiles.live=r.profile}else uxProfiles.demo={...p,revision:'demo-'+Date.now(),saved_at:Date.now()/1000};localStorage.setItem('ur-workstation-'+pMode,JSON.stringify(uxProfile()));uxApplyProfile();uxEditing=false;toast('平台工位配置已保存')}catch(e){toast(e.message)}finally{uxSaving=false;render()}
 }
-async function uxReloadProfile(show=false) {
-  if(pMode!=='live')return;
-  try {
-    const result=await pApi('workstation'); uxProfiles.live=result.profile;
-    localStorage.setItem('ur-workstation-live',JSON.stringify(result.profile));
-    uxApplyProfile(); uxEditing=false; render(); if(show)toast('已读取工位配置');
-  }catch(e){toast('读取工位失败：'+e.message)}
+async function uxReloadProfile(show=false){if(pMode!=='live')return;try{const r=await pApi('workstation');uxProfiles.live=r.profile;localStorage.setItem('ur-workstation-live',JSON.stringify(r.profile));uxApplyProfile();uxEditing=false;await uwPoll();await uxLoadAssets();render();if(show)toast('已读取本地工位与当前会话')}catch(e){toast('读取工位失败：'+e.message)}}
+const uxSwitchMode=pSwitchMode;pSwitchMode=async function(){await uxSwitchMode();uxAssets=[];if(pMode==='live')await uxReloadProfile();else{uxEditing=false;uxApplyProfile();render()}};
+const uxCaptureStart=uwCaptureStart;uwCaptureStart=async function(){if(uxRequireProfile())await uxCaptureStart()};
+const uxConnect=pConnect;pConnect=async function(device){if(uxCaptureOccupied())return toast('原采集程序运行中，请查看它的本机预览，勿重复打开设备');return uxConnect(device)};
+views.ur5e=()=>!uxProfile()?uxSetupGate():pHead('工作台','现场采集、原始数据登记与训练选择。')+uxSummary()+`<div class="ux-daily-grid">${[['01','ur-live','数采','现场确认、对齐、连续录制、正常退出'],['02','edge-data','数据','只读登记、完整性检查、回放和选择'],['03','edge-train','训练','使用已登记且通过检查的数据创建实验']].map(([n,id,title,t])=>`<a class="card ux-task" href="#${id}"><span>${n}</span><h2>${title}</h2><p>${t}</p><strong>进入${title} →</strong></a>`).join('')}</div><section class="card"><h2>采集进程状态</h2><p>${uwPhaseLabels[uwSession()?.phase]||'未启动平台托管会话'}</p><p>外部终端启动的会话不属于平台托管；登记数据不会接管其控制通道。</p><a href="#ur-live">查看原程序日志 →</a></section>`;
+views['ur-live']=()=>!uxProfile()?uxSetupGate():pHead('数采','确认现场 → 初始化 → ALIGN → 连续多条 → q 正常退出。')+uxSummary()+`<div class="ux-step-strip"><span>1 现场确认</span><span>2 实际对齐</span><span>3 连续录制</span><span>4 保存并退出</span><a href="#edge-data">5 核查产物 →</a></div><section class="card ux-preview-boundary"><h2>实时画面在本机预览窗口</h2><p>原程序负责三路相机和触觉预览。网页展示原程序状态、终端与保存结果，不会重复打开相机或串口。已保存图像可在数据页查看。</p></section><details class="card fields ux-advanced" ${uwSession()?.running?'':'open'}><summary>本次采集模式与启动命令</summary>${uwCaptureSettings()}<p>相机基准功能需独立可用的原始帧源；原程序的显示窗口不自动作为标定输入。</p></details><section class="card"><div id="uw-capture-panel">${uwCapturePanel()}</div></section>`;
+
+function uxAssetReady(a){return !!a&&!a.active&&a.training_ready===true&&a.production_training_qualified!==false}
+function uxAssetLabel(a){if(a.active)return '采集中 · 禁止训练';if(a.training_ready&&a.production_training_qualified!==false)return '检查通过';if(a.checked_at)return '检查未通过';return '待完整检查'}
+function uxAssetTable(){
+  if(pMode==='demo')return '<p class="subtle">演示模式没有真实数据。连接本地服务后可扫描已配置根目录；不会移动或改写原数据。</p>';
+  if(!uxAssets.length)return '<p>尚无已登记数据。采集结束后刷新，或扫描历史会话目录。</p>';
+  return `<div class="ux-table-wrap"><table><thead><tr><th>会话与真实路径</th><th>采集模式</th><th>片段／帧</th><th>完整性与保存结果</th><th>操作</th></tr></thead><tbody>${uxAssets.map((a,i)=>`<tr><td><strong>${esc(a.id)}</strong><small>${esc(a.session_time||a.started_at||a.created_at||'会话时间待核对')}</small><code>${esc(a.path||a.dataset_path||a.id)}</code></td><td>${esc(a.mode||'待核对')}</td><td>${a.n_episodes??'—'} 条／${a.n_frames??a.n_steps??'—'} 帧<small>完整 ${a.complete_episodes??'—'} · 不完整 ${a.incomplete_episodes??'—'} · 未知 ${a.unknown_episodes??'—'}</small></td><td>${badge(uxAssetLabel(a),uxAssetReady(a)?'':'amber')}<small>${esc(a.integrity||'尚未完整检查')}</small><small>${esc((a.errors||[]).join('；'))}</small><details><summary>最终结果</summary><pre class="log">${esc(JSON.stringify(a.final_result??'等待原程序结果',null,2))}</pre></details></td><td><div class="actions"><button ${a.active||uxAssetsBusy?'disabled':''} onclick="uxAuditAsset(${i})">完整检查</button><button ${a.active?'disabled':''} onclick="uxOpenReplay(${i})">缩略图／回放</button><button class="primary" ${!uxAssetReady(a)?'disabled':''} onclick="uxSelectAsset(${i})">选择训练</button></div></td></tr>`).join('')}</tbody></table></div>`;
 }
-const uxSwitchMode=pSwitchMode;
-pSwitchMode=async function(){await uxSwitchMode();if(pMode==='live')await uxReloadProfile();else{uxEditing=false;uxApplyProfile();render()}};
-const uxCaptureStart=uwCaptureStart;
-uwSaveCapture=function(){uxApplyProfile()};
-uwCaptureStart=async function(){if(uxRequireProfile())await uxCaptureStart()};
+function uxPaintAssets(){const e=$('#ux-assets');if(e)e.innerHTML=uxAssetTable()}
+async function uxLoadAssets(show=false){if(pMode!=='live'||uxAssetsBusy)return;uxAssetsBusy=true;try{const r=await pApi('datasets');uxAssets=Array.isArray(r)?r:r.datasets||[];uxPaintAssets();if(show)toast('已读取平台索引；活跃会话不做全量检查')}catch(e){toast(e.message)}finally{uxAssetsBusy=false;uxPaintAssets()}}
+async function uxScanAssets(){if(pMode!=='live')return toast('请连接本地服务后扫描');if(uxAssetsBusy)return;uxAssetsBusy=true;uxPaintAssets();try{const r=await pApi('datasets/scan',{});uxAssets=Array.isArray(r)?r:r.datasets||[];toast('已扫描登记范围，原数据保持原样')}catch(e){toast(e.message)}finally{uxAssetsBusy=false;uxPaintAssets()}}
+async function uxRegisterAsset(){const path=$('#ux-dataset').value.trim();if(!path)return toast('请填写原程序输出的完整 Zarr 路径');if(pMode!=='live')return toast('登记真实路径需要连接本地服务');try{await pApi('datasets/register',{path});await uxLoadAssets();toast('已登记路径，请完成检查后选择训练')}catch(e){toast(e.message)}}
+async function uxAuditAsset(index){const a=uxAssets[index];if(!a||a.active||uxAssetsBusy)return;uxAssetsBusy=true;uxPaintAssets();try{await pApi('datasets/audit',{dataset:a.id});toast('检查完成，结果以完整性栏为准')}catch(e){toast(e.message)}finally{uxAssetsBusy=false;await uxLoadAssets()}}
+function uxSelectAsset(index){const a=uxAssets[index];if(!uxAssetReady(a))return toast('数据采集中、未完成检查或不完整，不能选择训练');uwConfig.asset_id=a.id;uwConfig.dataset=a.path||a.dataset_path||a.id;uwPersist();location.hash='edge-train'}
+function uxUseDataset(){return uxRegisterAsset()}
+views['edge-data']=()=>!uxProfile()?uxSetupGate():pHead('数据','原程序写盘，平台只读登记与检查。')+uxSummary()+`<section class="card fields"><h2>登记已有数据</h2><p>读取范围：${esc((uxDraft().external_data_roots||[]).join('；'))}</p><label for="ux-dataset">原程序输出的 replay_buffer.zarr 绝对路径</label><input id="ux-dataset" value="${esc(uwConfig.dataset)}"><div class="actions"><button onclick="uxRegisterAsset()">登记此路径</button><button onclick="uxScanAssets()">扫描历史会话目录</button><button onclick="uxLoadAssets(true)">刷新索引</button></div><p class="subtle">登记、检查和回放只读原目录；索引写入平台目录。采集中仅展示状态，禁止同时训练或回放。缺少完整性回执的数据默认为待核查，不会静默删除片段。</p></section><section class="card"><div class="card-head"><h2>数据资产与保存结果</h2><button onclick="uxLoadAssets(true)">刷新</button></div><div id="ux-assets">${uxAssetTable()}</div></section>`;
 
-views.ur5e=()=>!uxProfile()?uxSetupGate():pHead('工作台','选择今天要做的工作。')+uxSummary()+
-  `<div class="ux-daily-grid">${[['01','ur-live','数采','对齐、录制、保存下一条'],['02','edge-data','数据','查看片段、检查并选择训练集'],['03','edge-train','训练','创建实验、查看日志与模型结果']].map(([n,id,title,copy])=>`<a class="card ux-task" href="#${id}"><span>${n}</span><h2>${title}</h2><p>${copy}</p><strong>进入${title} →</strong></a>`).join('')}</div>
-  <section class="card"><div class="card-head"><h2>当前工位状态</h2><a href="#ur-settings">硬件与环境设置</a></div><div id="p-device-summary">${pDeviceSummary()}</div></section>`;
-views['ur-live']=()=>!uxProfile()?uxSetupGate():pHead('数采','采前核对 → 关节对齐 → 逐条录制。')+uxSummary()+
-  `<div class="ux-step-strip"><span>1 采前核对</span><span>2 ALIGN 对齐</span><span>3 录制与保存</span><a href="#edge-data">4 查看数据 →</a></div>
-  <section class="card ux-preflight"><div><h2>采前核对</h2><p>确认相机视角、物体位置和工作区，然后启动采集。</p></div><a href="#camera-check"><button>检查相机画面与基准</button></a></section>
-  <section class="card"><div id="uw-capture-panel">${uwCapturePanel()}</div></section>
-  <details class="card ux-advanced"><summary>操作说明与终端命令</summary><p>ALIGN 后观察对齐完成再确认。s 开始，Enter 结束，d 删除当前条，u 进入下一条。</p><p>使用已保存的工位脚本，当前启动参数为 --no-tactile。录制结果以脚本日志为准。</p><pre class="log">${esc(uwCaptureCommand())}</pre><button onclick="uwCopy(uwCaptureCommand())">复制启动命令</button></details>`;
+async function uxOpenReplay(index){const a=uxAssets[index];if(!a||a.active)return;uxReplayAsset=a;uxReplayVersion++;modal(`<h2>已保存数据 · ${esc(a.id)}</h2><p class="subtle">这是原数据回放，不是实时相机画面。</p><div class="uw-form"><div><label for="ux-replay-camera">相机通道</label><select id="ux-replay-camera">${['camera_0','camera_1','camera_2'].map(k=>`<option>${k}</option>`).join('')}</select></div><div><label for="ux-replay-index">起始帧</label><input id="ux-replay-index" type="number" min="0" max="${Math.max(0,(a.n_frames||a.n_steps||1)-1)}" value="0"></div></div><div class="actions"><button onclick="uxReadFrame()">查看此帧</button><button onclick="uxReadReplay()">播放接续 12 帧</button><button onclick="uxReplayVersion++;closeModal()">关闭</button></div><div id="ux-replay-content" class="ux-replay"><p>正在读取已保存图像…</p></div>`);await uxReadFrame()}
+function uxImage(data){return typeof data==='string'&&/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(data)?`<img src="${data}" alt="已保存 RGB 数据帧">`:'<p>没有可显示的图像。</p>'}
+async function uxReadFrame(){if(!uxReplayAsset)return;const id=uxReplayAsset.id,camera=$('#ux-replay-camera').value,index=Number($('#ux-replay-index').value),version=++uxReplayVersion;try{const r=await pApi('datasets/frame?id='+encodeURIComponent(id)+'&camera='+encodeURIComponent(camera)+'&index='+index);if(version===uxReplayVersion)$('#ux-replay-content').innerHTML=uxImage(r.image)+`<p>${esc(r.camera)} · 第 ${r.index} 帧／${r.total_frames}</p>`}catch(e){if(version===uxReplayVersion)$('#ux-replay-content').textContent=e.message}}
+async function uxReadReplay(){if(!uxReplayAsset)return;const id=uxReplayAsset.id,camera=$('#ux-replay-camera').value,start=Number($('#ux-replay-index').value),version=++uxReplayVersion;try{const r=await pApi('datasets/replay?id='+encodeURIComponent(id)+'&camera='+encodeURIComponent(camera)+'&start='+start+'&count=12&stride=1');for(const [i,f] of (r.frames||[]).entries())setTimeout(()=>{if(version===uxReplayVersion)$('#ux-replay-content').innerHTML=uxImage(f.image)+`<p>${esc(camera)} · 第 ${f.index} 帧／${r.total_frames}（仅预览回放，不表示原始录制帧率）</p>`},i*100)}catch(e){if(version===uxReplayVersion)$('#ux-replay-content').textContent=e.message}}
 
-views['edge-data']=()=>!uxProfile()?uxSetupGate():pHead('数据','选择完整轨迹，检查后用于训练。')+uxSummary()+
-  `<section class="card fields"><h2>使用现场已有数据集</h2><label for="ux-dataset">完整 Zarr 路径</label><input id="ux-dataset" value="${esc(uwConfig.dataset)}"><div class="actions"><button class="primary" onclick="uxUseDataset()">选择并前往训练 →</button></div><p class="subtle">填写现场脚本保存的 replay_buffer.zarr；启动训练前会检查数据。</p></section>
-  <section class="card"><div class="card-head"><h2>平台数据片段</h2><div class="actions"><button onclick="pRefreshData()">刷新</button><button onclick="pCombine()">合并所选片段</button></div></div><div id="p-data-table">${pDataTable()}</div></section>
-  <details class="card fields ux-advanced"><summary>平台旁路录制工具</summary><p>通过 GELLO 帧推送录制到平台数据目录。</p><label><input id="p-touch-enable" type="checkbox" style="width:auto"> 包含 M3025 触觉</label><div class="actions"><button onclick="pCapture('start')">开始旁路片段</button><button onclick="pCapture('save')">结束并保存</button><button onclick="pCapture('discard')">丢弃片段</button></div><p id="p-capture-status">${pMode==='demo'?'模拟片段':pStatus.capture?.active?'正在录制':'未录制'}</p></details>`;
-function uxUseDataset(){const path=$('#ux-dataset').value.trim();if(!path)return toast('请填写数据集路径');uwConfig.dataset=path;uwPersist();location.hash='edge-train'}
-
-function uxTrainingFieldGroup(keys){return uwFields.filter(([key])=>keys.includes(key)).map(f=>uwInput(...f)).join('')}
-views['edge-train']=()=>!uxProfile()?uxSetupGate():pHead('训练','选择数据、调整本次实验参数，然后查看训练结果。')+uxSummary()+
-  `<div class="grid2"><section class="card fields"><h2>创建训练实验</h2>${uxTrainingFieldGroup(['dataset','exp_name'])}<div class="uw-form">${uxTrainingFieldGroup(['epochs','batch_size','lr'])}</div>
-  <details class="ux-advanced"><summary>高级训练参数</summary><div class="uw-form">${uxTrainingFieldGroup(['weight_decay','n_obs_steps','checkpoint_every','monitor_key','topk'])}
-    ${uwInput('resize-h','Resize 高','number',uwConfig.resize[0])}${uwInput('resize-w','Resize 宽','number',uwConfig.resize[1])}${uwInput('crop-h','Crop 高','number',uwConfig.crop[0])}${uwInput('crop-w','Crop 宽','number',uwConfig.crop[1])}</div><label><input id="uw-random-crop" type="checkbox" style="width:auto" ${uwConfig.random_crop?'checked':''}> 随机裁剪</label></details>
-    <div hidden>${uxTrainingFieldGroup(['project','conda_env','output_root'])}</div>
-    <div class="actions"><button onclick="uwPreviewTraining()">检查数据与环境</button><button class="primary" onclick="uwStartTraining()">开始训练</button></div><p id="uw-training-check" class="subtle">当前使用工位保存的训练环境，预设为三路视觉 DP。</p></section>
-  <section class="card"><h2>本次训练环境</h2><dl class="ux-profile-list"><div><dt>工位</dt><dd>${esc(uxProfile().name)}</dd></div><div><dt>算法</dt><dd>Diffusion Policy · 20Hz 配置</dd></div><div><dt>观测</dt><dd>三路 RGB＋关节＋夹爪状态</dd></div><div><dt>环境</dt><dd>${esc(uxProfile().conda_env)}</dd></div></dl><a href="#ur-settings">需要更换环境？修改工位设置 →</a>
-    <details class="ux-advanced"><summary>查看或复制训练命令</summary><pre id="uw-command" class="log uw-terminal">${esc(uwTrainingCommand(uwConfig))}</pre><button onclick="uwCopy(uwTrainingCommand(uwReadTraining()))">复制命令</button></details>
-    <details class="ux-advanced"><summary>包内 DP 训练工具</summary><button onclick="uxShowBundledTraining()">打开包内训练工具</button></details></section></div>
-  <section class="card"><div class="card-head"><h2>训练任务与结果</h2><button onclick="uwPoll(true)">刷新</button></div><div id="uw-jobs">${uwJobs()}</div></section>`;
+function uxTrainingFieldGroup(keys){return uwFields.filter(([k])=>keys.includes(k)).map(f=>uwInput(...f)).join('')}
+views['edge-train']=()=>!uxProfile()?uxSetupGate():pHead('训练','只使用已登记、已落盘并通过完整检查的数据。')+uxSummary()+`<div class="grid2"><section class="card fields"><h2>创建训练实验</h2>${uwConfig.asset_id?`<p>已选择资产 <strong>${esc(uwConfig.asset_id)}</strong>；启动前后端会重新检查。</p>`:'<div class="warning">尚未选择检查通过的数据。<a href="#edge-data">前往数据页 →</a></div>'}${uxTrainingFieldGroup(['dataset','exp_name'])}<div class="uw-form">${uxTrainingFieldGroup(['epochs','batch_size','lr'])}</div><details class="ux-advanced"><summary>高级训练参数</summary><div class="uw-form">${uxTrainingFieldGroup(['weight_decay','n_obs_steps','checkpoint_every','monitor_key','topk'])}${uwInput('resize-h','Resize 高','number',uwConfig.resize[0])}${uwInput('resize-w','Resize 宽','number',uwConfig.resize[1])}${uwInput('crop-h','Crop 高','number',uwConfig.crop[0])}${uwInput('crop-w','Crop 宽','number',uwConfig.crop[1])}</div><label><input id="uw-random-crop" type="checkbox" style="width:auto" ${uwConfig.random_crop?'checked':''}> 随机裁剪</label></details><div hidden>${uxTrainingFieldGroup(['project','conda_env','output_root'])}</div><div class="actions"><button onclick="uwPreviewTraining()">检查数据与环境</button><button class="primary" ${!uwConfig.asset_id||uxCaptureOccupied()?'disabled':''} onclick="uwStartTraining()">开始训练</button></div><p id="uw-training-check" class="subtle">活跃采集数据、保存未确认、不完整或完整性未知的数据不得用于训练。</p></section><section class="card"><h2>原训练程序 · 视觉 DP 预设</h2><p>Diffusion Policy · 20Hz · 三路 RGB＋关节＋夹爪。采集可含触觉，本训练预设仍只使用视觉观测；不修改原训练代码。</p><p>环境 ${esc(uxProfile().conda_env)} · ${esc(uxProfile().project)}</p><a href="#edge-data">重新选择数据资产 →</a><details class="ux-advanced"><summary>查看或复制训练命令</summary><pre id="uw-command" class="log uw-terminal">${esc(uwTrainingCommand(uwConfig))}</pre><button onclick="uwCopy(uwTrainingCommand(uwReadTraining()))">复制命令</button></details><p class="subtle">复制命令供人工核对；平台训练入口以资产 ID 解析真实路径，启动前再次执行数据门控。</p></section></div><section class="card"><div class="card-head"><h2>训练任务与结果</h2><button onclick="uwPoll(true)">刷新</button></div><div id="uw-jobs">${uwJobs()}</div></section>`;
 function uxShowBundledTraining(){modal(uwOldTrainingView())}
-uxApplyProfile();
-render();
+window.addEventListener('hashchange',()=>{if(page==='edge-data')uxLoadAssets()});
+uxApplyProfile();render();
+// Refreshing a loopback-served page reattaches to the same backend session; no process/key is started here.
+async function uxAutoResume(){
+  if(!['127.0.0.1','localhost'].includes(location.hostname))return;
+  try{const h=await pApi('health');if(h.service!=='embodied-edge')return;pMode='live';pLive=true;await pPoll();await uxReloadProfile()}catch{}
+}
+uxAutoResume();

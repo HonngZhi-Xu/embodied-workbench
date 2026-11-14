@@ -5,6 +5,7 @@ import threading
 import time
 import uuid
 from edge_agent.ur_workflow import training_plan
+from edge_agent.assets import CAPTURE_MODES, DEFAULT_EXTERNAL_ROOTS, ExternalAssets
 
 
 class WorkstationStore:
@@ -16,7 +17,11 @@ class WorkstationStore:
         with self.lock:
             if not self.path.exists():
                 return dict(configured=False, profile=None)
-            return dict(configured=True, profile=json.loads(self.path.read_text('utf-8')))
+            profile = json.loads(self.path.read_text('utf-8'))
+            profile.setdefault('capture_mode', 'rgb_tactile')
+            profile.setdefault('resume_path', '')
+            profile.setdefault('external_data_roots', list(DEFAULT_EXTERNAL_ROOTS))
+            return dict(configured=True, profile=profile)
 
     def save(self, profile, expected_revision):
         text_fields = ('name', 'robot_ip', 'gripper', 'camera_0', 'camera_1', 'camera_2',
@@ -43,6 +48,20 @@ class WorkstationStore:
             if type(value) is not int or not 1 <= value <= (255 if key == 'address' else 4000000):
                 raise ValueError('Invalid ' + key)
             clean[key] = value
+        clean['capture_mode'] = profile.get('capture_mode', 'rgb_tactile')
+        if clean['capture_mode'] not in CAPTURE_MODES:
+            raise ValueError('采集模式必须是 rgb_tactile 或 rgb_only。')
+        clean['resume_path'] = profile.get('resume_path', '')
+        if (not isinstance(clean['resume_path'], str) or len(clean['resume_path']) > 2048
+                or any(c in clean['resume_path'] for c in '\0\n\r')):
+            raise ValueError('Invalid resume_path.')
+        clean['resume_path'] = clean['resume_path'].strip()
+        roots = profile.get('external_data_roots', list(DEFAULT_EXTERNAL_ROOTS))
+        validator = ExternalAssets(self.path.parent)
+        validator.configure(roots)
+        clean['external_data_roots'] = list(roots)
+        if clean['resume_path']:
+            validator.check_resume(clean['resume_path'], clean['capture_mode'])
         with self.lock:
             current = self.read()['profile']
             if expected_revision != (current['revision'] if current else None):

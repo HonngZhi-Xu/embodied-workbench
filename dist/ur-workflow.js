@@ -1,151 +1,79 @@
-/* Site workflow: terminal keys are sent only by the local Linux service. */
-const uwDefaults = {
-  capture_script: '/home/zaq/gello_software/experiments/start_live_follow_local.sh',
-  project: '/home/zaq/diffusion_policy', conda_env: 'robodiff',
-  dataset: '/home/zaq/runtime_logs/live_follow_capture/20261111T061114Z_real/manual_task/replay_buffer.zarr',
-  output_root: '/home/zaq/diffusion_policy/data/outputs/dataset_20261111/vision_only_r1_60ep',
-  n_obs_steps: 1, resize: [240,320], crop: [216,288], random_crop: true,
-  lr: 5e-5, weight_decay: 1e-4, batch_size: 8, epochs: 60,
-  checkpoint_every: 5, monitor_key: 'train_loss', topk: 3, exp_name: 'vision_only'
-};
-let uwConfig;
-try { uwConfig = JSON.parse(localStorage.getItem('ur-site-workflow-v1')); } catch {}
-uwConfig = {...uwDefaults, ...uwConfig};
-let uwLive = {capture:null,jobs:[]}, uwDemo = null, uwBusy = false, uwTrainLegacy = false;
-const uwFields = [
-  ['project','训练项目目录','text'], ['conda_env','Conda 环境','text'],
-  ['dataset','完整 Zarr 数据集路径','text'], ['output_root','实验输出根目录','text'],
-  ['epochs','训练轮数','number'], ['batch_size','Batch size','number'],
-  ['lr','学习率','number'], ['weight_decay','Weight decay','number'],
-  ['n_obs_steps','观测步数','number'], ['checkpoint_every','检查点间隔 / epoch','number'],
-  ['monitor_key','Top-K 监控指标','text'], ['topk','Top-K 保留数','number'],
-  ['exp_name','实验名称','text']
-];
-const uwSession = () => pMode === 'demo' ? uwDemo : uwLive.capture;
-const uwQuote = text => "'" + String(text).replaceAll("'", "'\"'\"'") + "'";
-function uwPersist() { localStorage.setItem('ur-site-workflow-v1', JSON.stringify(uwConfig)); }
-function uwInput(key,label,type='text',value=uwConfig[key]) {
-  return `<div><label for="uw-${key}">${label}</label><input id="uw-${key}" type="${type}" ${type==='number'?'step="any"':''} value="${esc(String(value))}"></div>`;
+/* External process manager. Original GELLO / robodiff code and data stay unchanged. */
+const uwDefaults={capture_script:'/home/zaq/gello_software/experiments/start_live_follow_local.sh',capture_mode:'rgb_tactile',resume_path:'',project:'/home/zaq/diffusion_policy',conda_env:'robodiff',dataset:'',asset_id:'',output_root:'/home/zaq/diffusion_policy/data/outputs',n_obs_steps:1,resize:[240,320],crop:[216,288],random_crop:true,lr:5e-5,weight_decay:1e-4,batch_size:8,epochs:60,checkpoint_every:5,monitor_key:'train_loss',topk:3,exp_name:'vision_only'};
+let uwConfig;try{uwConfig=JSON.parse(localStorage.getItem('ur-site-workflow-v1'))}catch{}uwConfig={...uwDefaults,...uwConfig};
+let uwLive={capture:null,jobs:[]},uwDemo=null,uwBusy=false,uwPolling=false,uwStartReview=null,uwTrainLegacy=false;
+const uwFields=[['project','训练项目目录','text'],['conda_env','Conda 环境','text'],['dataset','已登记数据集真实路径','text'],['output_root','实验输出根目录','text'],['epochs','训练轮数','number'],['batch_size','Batch size','number'],['lr','学习率','number'],['weight_decay','Weight decay','number'],['n_obs_steps','观测步数','number'],['checkpoint_every','检查点间隔 / epoch','number'],['monitor_key','Top-K 监控指标','text'],['topk','Top-K 保留数','number'],['exp_name','实验名称','text']];
+const uwSession=()=>pMode==='demo'?uwDemo:uwLive.capture;
+const uwRequestId=()=>typeof crypto!=='undefined'&&crypto.randomUUID?crypto.randomUUID():'req-'+Date.now()+'-'+Math.random().toString(36).slice(2);
+const uwQuote=t=>"'"+String(t).replaceAll("'","'\"'\"'")+"'";
+function uwPersist(){localStorage.setItem('ur-site-workflow-v1',JSON.stringify(uwConfig))}
+function uwInput(key,label,type='text',value=uwConfig[key]){return `<div><label for="uw-${key}">${label}</label><input id="uw-${key}" type="${type}" ${type==='number'?'step="any"':''} ${key==='dataset'?'readonly':''} value="${esc(String(value??''))}"></div>`}
+function uwReadTraining(){const v={...uwConfig};for(const [k,,t] of uwFields){const e=$('#uw-'+k);if(e)v[k]=t==='number'?Number(e.value):e.value.trim()}v.resize=['resize-h','resize-w'].map(k=>Number($('#uw-'+k).value));v.crop=['crop-h','crop-w'].map(k=>Number($('#uw-'+k).value));v.random_crop=$('#uw-random-crop').checked;uwConfig=v;uwPersist();return v}
+function uwTrainingCommand(v){
+  const fields=['dataset_path='+JSON.stringify(v.dataset),'~shape_meta.obs.tactile','task.dataset.obs_keys=[camera_0,camera_1,camera_2,robot_joint,gripper_position]','n_obs_steps='+v.n_obs_steps,'policy.obs_encoder.resize_shape='+JSON.stringify(v.resize),'policy.obs_encoder.crop_shape='+JSON.stringify(v.crop),'policy.obs_encoder.random_crop='+v.random_crop,'optimizer.lr='+v.lr,'optimizer.weight_decay='+v.weight_decay,'dataloader.batch_size='+v.batch_size,'training.num_epochs='+v.epochs,'training.resume=false','training.checkpoint_every='+v.checkpoint_every,'checkpoint.topk.monitor_key='+v.monitor_key,'checkpoint.topk.mode=min','checkpoint.topk.k='+v.topk,'exp_name='+v.exp_name,'hydra.run.dir='+v.output_root.replace(/\/$/,'')+'/${now:%Y.%m.%d}/${now:%H.%M.%S}'];
+  return 'conda activate '+uwQuote(v.conda_env)+'\ncd '+uwQuote(v.project)+'\npython train.py --config-name=train_gello_live_image_20hz \\\n  '+fields.map(uwQuote).join(' \\\n  ');
 }
-function uwReadTraining() {
-  const result = {...uwConfig};
-  for (const [key,,type] of uwFields) result[key] = type === 'number' ? Number($('#uw-'+key).value) : $('#uw-'+key).value.trim();
-  result.resize = ['resize-h','resize-w'].map(k=>Number($('#uw-'+k).value));
-  result.crop = ['crop-h','crop-w'].map(k=>Number($('#uw-'+k).value));
-  result.random_crop = $('#uw-random-crop').checked;
-  uwConfig = result; uwPersist(); return result;
+function uwCaptureCommand(v=uwConfig){return 'bash '+uwQuote(v.capture_script)+(v.capture_mode==='rgb_only'?' --no-tactile':'')+(v.resume_path?' --resume '+uwQuote(v.resume_path):'')}
+async function uwCopy(t){try{await navigator.clipboard.writeText(t);toast('已复制')}catch{modal(`<h2>选择并复制命令</h2><textarea rows="12">${esc(t)}</textarea><button onclick="closeModal()">关闭</button>`)}}
+const uwPhaseLabels={startup_wait:'等待现场启动确认',startup_sent:'已发送 Enter，等待设备初始化',initializing:'初始化设备',waiting_align:'等待实际 ALIGN 输入提示',aligning:'对齐中，等待脚本回执',alignment_review:'脚本已报告对齐完成，等待操作员确认',ready:'持续跟随 · 未录制',recording:'持续跟随 · 正在录制',awaiting_receipt:'命令已发送 · 等待脚本回执',exiting:'退出处理中 · 等待保存与清理',exited:'进程已退出 · 产物另行核查',error:'采集异常 · 请查看终端和结果',unknown:'状态未知 · 请核对原程序',uncontrolled:'只读观察 · 控制通道不可用'};
+function uwControllable(s=uwSession()){return s?.controllable!==false&&s?.control_available!==false}
+function uwAllowed(a){const s=uwSession();return !!s?.running&&uwControllable(s)&&!uwBusy&&(s.allowed_actions||[]).includes(a)}
+function uwCapturePanel(){
+  const s=uwSession(),running=!!s?.running,blocked=uwBusy||running||s?.phase==='uncontrolled';
+  const key=(a,label,confirm=false,primary=false)=>`<button ${uwAllowed(a)?'':'disabled'} class="${primary?'primary':''}" onclick="${confirm?`uwConfirm('${a}','${esc(s?.id||'')}')`:`uwCaptureKey('${a}',false,'${esc(s?.id||'')}')`}">${label}</button>`;
+  const logs=s?.log||[],log=Array.isArray(logs)?logs.join(''):String(logs);
+  const saveLabels={queued:'已提交后台保存队列，尚未确认落盘',not_saved:'本条未保存',unconfirmed:'保存状态未确认',failed:'保存或采集失败',deletion_reported:'原程序报告删除完成',writer_stopped_pending_audit:'原程序报告写盘结束，等待数据检查'};
+  const result=s?.save_state?{save_state:saveLabels[s.save_state]||s.save_state,episode_result:s.episode_result,delete_result:s.delete_result,result:s.result,quality_warning:s.quality_warning}:s?.save_status||s?.result_summary||s?.result;
+  return `<div class="card-head"><h2>${uwPhaseLabels[s?.phase]||'采集未启动'}</h2>${badge(pMode==='demo'?'模拟交互':s&&!uwControllable(s)?'只读会话':running?'平台托管会话':'未运行',pMode==='demo'||s&&!uwControllable(s)?'amber':'')}</div>
+    ${running&&s?.aligned?'<div class="warning">原程序仍在持续遥操跟随。保存或丢弃一条数据不会让机械臂停止。</div>':''}
+    ${s?.phase==='uncontrolled'?'<div class="warning">后端重启后的 PTY 不可恢复。这里只读显示原会话，请在原终端核对进程与设备状态；不要重复启动。</div>':''}
+    ${s?.startup_prompt?`<div class="uw-prompt"><strong>原脚本现场确认提示</strong><pre>${esc(typeof s.startup_prompt==='string'?s.startup_prompt:s.prompt_text||'请核对下方终端实际提示')}</pre></div>`:''}
+    <div class="uw-controls"><div><small>1 · 启动与对齐</small><div class="actions uw-keyboard"><button class="primary" ${blocked?'disabled':''} onclick="uwCaptureStart()">启动现场采集</button>${key('startup','确认现场准备，继续启动',true)}${key('align','确认姿态并执行对齐',true)}${key('ready','确认实际对齐已完成',true)}</div></div>
+    <div><small>2 · 连续多条录制</small><div class="actions uw-keyboard">${key('start','s ↵ 开始本条／下一条',false,true)}${key('finish','↵ 保存本条')}${key('discard','d ↵ 丢弃当前条',true)}${key('delete_last','u ↵ 删除最近已保存的一条',true)}</div></div>
+    <div><small>3 · 正常退出</small><div class="actions uw-keyboard">${key('quit','q ↵ 保存有效片段并退出',true)}</div></div></div>
+    ${s?.command_pending?`<p class="uw-pending">命令已发送，等待原程序接受并回执：${esc(typeof s.command_pending==='string'?s.command_pending:JSON.stringify(s.command_pending))}</p>`:''}
+    <p class="subtle">按键已发送 ≠ 脚本已执行；保存队列已接收 ≠ 数据已落盘。片段可能因不足帧数、时序质量或传感器异常被拒绝保存。退出超时不会自动强杀。</p>
+    ${s?.message?`<p>${esc(s.message)}</p>`:''}${result?`<details class="ux-advanced"><summary>保存回执与最终结果（以原程序为准）</summary><pre class="log">${esc(typeof result==='string'?result:JSON.stringify(result,null,2))}</pre></details>`:''}
+    ${s?.dataset_path||s?.output_dir?`<p class="uw-path">原程序输出：${esc(s.dataset_path||s.output_dir)} <a href="#edge-data">查看已登记产物 →</a></p>`:''}
+    ${s?.run_manifest?`<details class="ux-advanced"><summary>原程序运行清单：实际设备绑定与环境（只读）</summary><pre class="log">${esc(JSON.stringify(s.run_manifest,null,2))}</pre></details>`:''}
+    <pre class="log uw-terminal" id="uw-terminal">${esc(log||'等待原脚本输出；平台不会自动发送 Enter 或 ALIGN。')}</pre>
+    <details class="ux-advanced"><summary>异常处理：中断／终止进程</summary><p>这些是软件进程操作，不是硬件急停。当前未保存片段会被丢弃，之前已保存数据保留；正常退出请使用上面的 q。</p><div class="actions">${['interrupt','terminate','kill'].map((m,i)=>`<button ${!running||!uwControllable(s)||uwBusy?'disabled':''} onclick="uwConfirm('${m}','${esc(s?.id||'')}')">${['中断采集进程（SIGINT）','发送终止信号（SIGTERM）','强制结束进程（SIGKILL）'][i]}</button>`).join('')}</div></details>`;
 }
-function uwTrainingCommand(v) {
-  const overrides = [
-    'dataset_path='+JSON.stringify(v.dataset), '~shape_meta.obs.tactile',
-    'task.dataset.obs_keys=[camera_0,camera_1,camera_2,robot_joint,gripper_position]',
-    'n_obs_steps='+v.n_obs_steps,
-    'policy.obs_encoder.resize_shape='+JSON.stringify(v.resize),
-    'policy.obs_encoder.crop_shape='+JSON.stringify(v.crop),
-    'policy.obs_encoder.random_crop='+v.random_crop,
-    'optimizer.lr='+v.lr, 'optimizer.weight_decay='+v.weight_decay,
-    'dataloader.batch_size='+v.batch_size, 'training.num_epochs='+v.epochs,
-    'training.resume=false', 'training.checkpoint_every='+v.checkpoint_every,
-    'checkpoint.topk.monitor_key='+v.monitor_key, 'checkpoint.topk.mode=min',
-    'checkpoint.topk.k='+v.topk, 'exp_name='+v.exp_name,
-    'hydra.run.dir='+v.output_root.replace(/\/$/,'')+'/${now:%Y.%m.%d}/${now:%H.%M.%S}'
-  ];
-  return 'conda activate '+uwQuote(v.conda_env)+'\ncd '+uwQuote(v.project)+
-    '\npython train.py --config-name=train_gello_live_image_20hz \\\n  '+overrides.map(uwQuote).join(' \\\n  ');
+function uwCaptureSettings(){return `<div class="uw-form">${uwInput('capture-script','采集脚本绝对路径','text',uwConfig.capture_script)}<div><label for="uw-capture-mode">本次采集模式</label><select id="uw-capture-mode" onchange="uwUpdateCaptureDraft()"><option value="rgb_tactile" ${uwConfig.capture_mode==='rgb_tactile'?'selected':''}>三路相机＋触觉（原命令默认）</option><option value="rgb_only" ${uwConfig.capture_mode==='rgb_only'?'selected':''}>仅三路相机（--no-tactile）</option></select></div>${uwInput('resume-path','接续已有数据路径（选填）','text',uwConfig.resume_path)}</div><p class="subtle">模式只决定本次参数。接续需通过已有数据模式检查，最终是否接受由原程序判断。</p><pre class="log" id="uw-capture-command">${esc(uwCaptureCommand())}</pre>`}
+function uwUpdateCaptureDraft(){const m=$('#uw-capture-mode'),r=$('#uw-resume-path');if(m)uwConfig.capture_mode=m.value;if(r)uwConfig.resume_path=r.value.trim();uwPersist();const e=$('#uw-capture-command');if(e)e.textContent=uwCaptureCommand()}
+function uwSaveCapture(){const e=$('#uw-capture-script');if(e)uwConfig.capture_script=e.value.trim();uwUpdateCaptureDraft()}
+function uwPaintCapture(){const panel=$('#uw-capture-panel');if(!panel)return;const before=$('#uw-terminal'),position=before?.scrollTop||0,follow=!before||before.scrollHeight-position-before.clientHeight<30;panel.innerHTML=uwCapturePanel();const after=$('#uw-terminal');if(after)after.scrollTop=follow?after.scrollHeight:position}
+async function uwCaptureStart(){
+  if(uwBusy||uwSession()?.running)return;uwSaveCapture();uwBusy=true;uwPaintCapture();
+  const parameters={script:uwConfig.capture_script,capture_mode:uwConfig.capture_mode,resume_path:uwConfig.resume_path||null};
+  try{const plan=pMode==='demo'?{command:uwCaptureCommand(),parameters}:await pApi('ur-workflow/capture/preview',parameters);uwStartReview={parameters,request_id:uwRequestId(),mode:pMode};
+    modal(`<h2>核对本次采集启动</h2><p>启动原有脚本，不改动其配置、解释器或保存格式。Enter 和 ALIGN 确认会在原程序提示后另行进行。</p><pre class="log">${esc(plan.command||uwCaptureCommand())}</pre><pre class="log">${esc(JSON.stringify(plan.parameters||plan.snapshot||parameters,null,2))}</pre><label><input id="uw-idle-confirm" type="checkbox" style="width:auto"> 我已确认外部终端没有正在占用设备的采集进程，并已关闭平台独立相机／触觉诊断连接</label><div class="actions"><button onclick="uwStartReview=null;closeModal()">返回</button><button class="primary" onclick="uwCommitCaptureStart()">确认并启动原脚本</button></div>`);
+  }catch(e){toast(e.message)}finally{uwBusy=false;uwPaintCapture()}
 }
-function uwCaptureCommand() { return 'bash '+uwQuote(uwConfig.capture_script)+' --no-tactile'; }
-async function uwCopy(text) {
-  try { await navigator.clipboard.writeText(text); toast('已复制'); }
-  catch { modal(`<h2>选择并复制命令</h2><textarea rows="16" style="width:100%">${esc(text)}</textarea><button onclick="closeModal()">关闭</button>`); }
+async function uwCommitCaptureStart(){
+  const r=uwStartReview;if(!r||r.mode!==pMode||uwBusy)return;if(!$('#uw-idle-confirm').checked)return toast('请先确认设备没有被外部进程占用');uwBusy=true;closeModal();uwPaintCapture();
+  try{if(pMode==='demo')uwDemo={id:'DEMO-'+Date.now(),running:true,aligned:false,control_available:true,phase:'startup_wait',startup_prompt:'确认现场准备后按 Enter 继续：',allowed_actions:['startup'],log:['[模拟] 说明：稍后需要 ALIGN。\n确认现场准备后按 Enter 继续：']};else uwLive.capture=await pApi('ur-workflow/capture/start',{...r.parameters,confirmed_external_idle:true,request_id:r.request_id});uwStartReview=null}
+  catch(e){toast(e.message)}finally{uwBusy=false;uwPaintCapture()}
 }
-function uwCapturePanel() {
-  const session = uwSession();
-  const running = !!session?.running;
-  const disabled = condition => uwBusy || !condition ? 'disabled' : '';
-  const phase = ({waiting_align:'等待终端 ALIGN 提示',align_sent:'已发送 ALIGN，请观察对齐结果',ready:'操作员已确认对齐完成',recording:'已发送开始录制命令',between:'已发送结束／删除命令',next_sent:'已发送进入下一条命令'})[session?.phase] || '采集未启动';
-  return `<div class="card-head"><h2>${phase}</h2>${badge(pMode==='demo'?'模拟终端':running?'现场终端运行中':'现场终端未运行',pMode==='demo'?'amber':'')}</div>
-    <div class="actions uw-keyboard">
-      <button class="primary" ${disabled(!running)} onclick="uwCaptureStart()">启动现场采集</button>
-      <button ${disabled(running && session?.align_prompt && session?.phase==='waiting_align')} onclick="uwConfirm('align')">发送 ALIGN</button>
-      <button ${disabled(running && session?.phase==='align_sent')} onclick="uwConfirm('ready')">确认对齐已完成</button>
-      <button ${disabled(running && session?.aligned && !['recording','next_sent'].includes(session?.phase))} onclick="uwCaptureKey('start')">s ↵ 开始录制</button>
-      <button ${disabled(running && ['recording','next_sent'].includes(session?.phase))} onclick="uwCaptureKey('finish')">↵ 结束本条</button>
-      <button ${disabled(running && ['recording','next_sent'].includes(session?.phase))} onclick="uwConfirm('discard')">d ↵ 删除当前条</button>
-      <button ${disabled(running && session?.phase==='between')} onclick="uwCaptureKey('next')">u ↵ 进入下一条</button>
-      <button ${disabled(running)} onclick="uwConfirm('stop')">停止采集进程</button>
-    </div><p class="subtle">状态表示平台已发送的命令。是否开始、保存或删除成功，请核对下方现场脚本日志。u 已按现场确认设置为“进入下一条录制”。</p>
-    <pre class="log uw-terminal" id="uw-terminal">${esc((session?.log||[]).join('') || '启动后显示现场终端输出；模拟模式可体验按键流程。')}</pre>`;
+function uwConfirm(a,expectedSession=null){
+  const s=uwSession();if(!s?.running||uwBusy)return;if(expectedSession&&s.id!==expectedSession)return toast('会话已变化，请重新核对');
+  const messages={startup:'确认现场人员、机械臂姿态与工作区符合原脚本提示。只发送一个 Enter，随后等待设备初始化。',align:'确认姿态与工作区后发送 ALIGN，原程序会执行关节对齐，请现场观察。',ready:'原程序已报告对齐完成。请现场观察，确认实际姿态对齐后继续。',discard:'发送 d＋Enter，丢弃当前正在录制的片段。原程序仍会持续遥操跟随。',delete_last:'发送 u＋Enter，删除最近一条已保存数据。此操作不是开始下一条，确认后等待原程序删除回执。',quit:'发送 q＋Enter，请求保存当前有效片段并正常退出。无效或不足帧数的片段可能不保存；等待原程序完成清理。',interrupt:'发送 SIGINT 中断采集进程。当前未保存片段会丢弃，之前已保存数据保留。',terminate:'发送 SIGTERM 终止采集进程，可能打断当前写盘与设备清理。不会自动升级为强制结束。',kill:'发送 SIGKILL 强制结束采集进程。可能遗留未完成写盘和设备资源，仅在人工确认必要时使用。'};
+  modal(`<h2>确认操作</h2><p>${messages[a]||'确认本次操作'}</p><p class="subtle">当前会话：${esc(s.id)}</p><div class="actions"><button onclick="closeModal()">返回</button><button class="primary" onclick="closeModal();uwCaptureKey('${a}',true,'${esc(s.id)}')">确认并执行</button></div>`);
 }
-pages.push(['ur-live','现场采集']);
-$('#nav').insertAdjacentHTML('afterbegin','<a href="#ur-live" data-page="ur-live">⌨ UR5e 现场采集</a>');
-views['ur-live'] = () => pHead('UR5e · 现场采集台','现场脚本 / 手动 ALIGN / 三路 RGB / 原生 episode 录制。', '<a href="#camera-check"><button>采前相机检查</button></a>')+
-  `<div class="grid2"><section class="card fields"><h2>现场启动配置</h2>${uwInput('capture-script','采集脚本绝对路径','text',uwConfig.capture_script)}
-  <p>启动参数 <code>--no-tactile</code>，当前流程为视觉采集。ALIGN 会触发现有 GELLO 的关节对齐，请先确认现场姿态与工作区。</p>
-  <div class="actions"><button onclick="uwSaveCapture()">保存脚本路径</button><button onclick="uwCopy(uwCaptureCommand())">复制启动命令</button></div>
-  <pre class="log">${esc(uwCaptureCommand())}</pre><p class="subtle">采集进程由本地 Linux 工作台托管。已在其他终端启动的进程，需要先结束再由本页启动。采前相机检查需连接对应的 GELLO 图像来源。</p></section>
-  <section class="card"><h2>录制顺序</h2><ol><li>启动现场脚本，等待日志提示输入 ALIGN。</li><li>核对姿态后发送 ALIGN，观察机械臂完成对齐，再点击确认。</li><li>s＋Enter 开始，Enter 结束并保存本条。</li><li>录制中用 d＋Enter 删除本条。</li><li>条目结束后用 u＋Enter 进入下一条录制。</li></ol><a href="#edge-train">录制完成，进入视觉 DP 训练 →</a><p class="subtle">这里使用现场脚本自己的数据保存流程；平台旁路录制入口仍在“实机数据管理”。</p></section>
-  <section class="card wide"><div id="uw-capture-panel">${uwCapturePanel()}</div></section></div>`;
-const uwOldTrainingView = views['edge-train'];
-views['edge-train'] = () => {
-  if (uwTrainLegacy) return '<button onclick="uwTrainLegacy=false;render()">返回现场 robodiff 配置</button>'+uwOldTrainingView();
-  return pHead('UR5e · 视觉 DP 训练','robodiff / train_gello_live_image_20hz / 三路 RGB＋关节＋夹爪。', '<button onclick="uwTrainLegacy=true;render()">包内 DP 训练</button>')+
-    `<div class="grid2"><section class="card fields"><h2>现场训练参数</h2><div class="uw-form">${uwFields.map(f=>uwInput(...f)).join('')}
-    ${uwInput('resize-h','Resize 高','number',uwConfig.resize[0])}${uwInput('resize-w','Resize 宽','number',uwConfig.resize[1])}
-    ${uwInput('crop-h','Crop 高','number',uwConfig.crop[0])}${uwInput('crop-w','Crop 宽','number',uwConfig.crop[1])}</div>
-    <label><input id="uw-random-crop" type="checkbox" ${uwConfig.random_crop?'checked':''} style="width:auto"> 随机裁剪</label>
-    <p>观测字段固定为 camera_0、camera_1、camera_2、robot_joint、gripper_position。当前预设删除 tactile 观测，resume=false。</p>
-    <div class="actions"><button onclick="uwPreviewTraining()">更新命令 / 检查本地环境</button><button onclick="uwCopy(uwTrainingCommand(uwReadTraining()))">复制训练命令</button><button class="primary" onclick="uwStartTraining()">启动现场训练</button></div>
-    <p id="uw-training-check" class="subtle">输入实际数据集地址后先更新命令。本地启动通过 conda run 使用指定环境。</p></section>
-    <section class="card"><h2>可复制的训练命令</h2><pre id="uw-command" class="log uw-terminal">${esc(uwTrainingCommand(uwConfig))}</pre><p>训练输出按日期、时间及任务 ID 建目录，保留请求参数与日志。Top-K 默认监控 train_loss，验证效果请结合独立验证集和实机评测。</p></section></div>
-    <section class="card"><div class="card-head"><h2>现场训练任务</h2><button onclick="uwPoll(true)">刷新任务</button></div><div id="uw-jobs">${uwJobs()}</div></section>`;
-};
-function uwJobs() {
-  if (pMode==='demo') return '<p>演示模式可编辑和复制命令；实际任务由 Linux 本地服务启动。</p>';
-  return uwLive.jobs.map(j=>`<div class="card-head"><strong>${esc(j.id)} · ${esc(j.status)}</strong>${j.status==='running'?`<button onclick="uwCancelTraining('${esc(j.id)}')">取消训练</button>`:''}</div><p>${esc(j.dataset)}</p><p>输出 ${esc(j.output_dir||'')}</p><pre class="log uw-terminal">${esc((j.log||[]).join('\n'))}</pre><p>${esc((j.checkpoints||[]).join('\n'))}</p>`).join('') || '<p>尚无现场训练任务。</p>';
+function uwDemoReceipt(a,s){const states={startup:['waiting_align',['align']],align:['alignment_review',['ready','align']],ready:['ready',['start','delete_last','quit']],start:['recording',['finish','discard','quit']],next:['recording',['finish','discard','quit']],finish:['ready',['start','delete_last','quit']],discard:['ready',['start','delete_last','quit']],delete_last:['ready',['start','delete_last','quit']],quit:['exited',[]]};if(['interrupt','terminate','kill'].includes(a)){s.running=false;s.phase='error';s.allowed_actions=[];return}const x=states[a];if(!x)return;s.phase=x[0];s.allowed_actions=x[1];s.command_pending=null;if(a==='startup'){s.startup_prompt=false;s.align_prompt=true}if(a==='ready')s.aligned=true;if(a==='quit')s.running=false;if(a==='finish')s.save_status='[模拟] 已提交后台保存队列，尚未确认落盘';s.log.push('[模拟回执] '+a+'\n')}
+async function uwCaptureKey(a,confirmed=false,expectedSession=null){
+  const s=uwSession();if(!s?.running||uwBusy||!uwControllable(s))return;if(expectedSession&&s.id!==expectedSession)return toast('会话已变化，请重新核对');const signal=['interrupt','terminate','kill'].includes(a);if(!signal&&!uwAllowed(a))return toast('原程序尚未进入可执行此操作的状态');if(['startup','align','ready','discard','delete_last','quit',...(signal?[a]:[])].includes(a)&&!confirmed)return toast('此操作需要单独确认');
+  const sessionId=s.id,requestId=uwRequestId();uwBusy=true;uwPaintCapture();
+  try{if(pMode==='demo')uwDemoReceipt(a,s);else if(signal){const r=await pApi('ur-workflow/capture/stop',{session_id:sessionId,method:a,confirmed,request_id:requestId});if(uwSession()?.id===sessionId)uwLive=r.capture!==undefined?r:{...uwLive,capture:r}}else{const r=await pApi('ur-workflow/capture/key',{action:a,session_id:sessionId,confirmed,request_id:requestId});if(uwSession()?.id===sessionId)uwLive.capture=r}}
+  catch(e){toast(e.message)}finally{uwBusy=false;uwPaintCapture()}
 }
-function uwSaveCapture() { uwConfig.capture_script=$('#uw-capture-script').value.trim(); uwPersist(); toast('已保存脚本路径'); }
-async function uwCaptureStart() {
-  uwSaveCapture();
-  if (pMode==='demo') { uwDemo={id:'DEMO-UR',running:true,aligned:false,align_prompt:true,phase:'waiting_align',log:['[模拟] 等待输入 ALIGN\n']}; render(); return; }
-  if (uwBusy) return; uwBusy=true;
-  try { uwLive.capture=await pApi('ur-workflow/capture/start',{script:uwConfig.capture_script}); }
-  catch(e) { toast(e.message); } finally { uwBusy=false; if ($('#uw-capture-panel')) $('#uw-capture-panel').innerHTML=uwCapturePanel(); }
-}
-function uwConfirm(action) {
-  const message=({align:'请确认现场姿态和工作区，发送 ALIGN 后由 GELLO 执行关节对齐。',ready:'请先观察终端日志与机械臂，确认关节对齐已经完成。',discard:'将向现场终端发送 d＋Enter，删除当前正在录制的条目。',stop:'停止本页托管的采集进程。请先结束当前录制并核对保存结果。'})[action];
-  modal(`<h2>确认操作</h2><p>${message}</p><div class="actions"><button onclick="closeModal()">返回</button><button class="primary" onclick="closeModal();uwCaptureKey('${action}',true)">确认并执行</button></div>`);
-}
-async function uwCaptureKey(action,confirmed=false) {
-  const session=uwSession(); if (!session?.running || uwBusy) return;
-  uwBusy=true;
-  try {
-    if (pMode==='demo') {
-      if (action==='stop') session.running=false;
-      else { session.phase=({align:'align_sent',ready:'ready',start:'recording',finish:'between',discard:'between',next:'next_sent'})[action]; if(action==='ready')session.aligned=true; }
-      session.log.push('[模拟] '+action+'\n');
-    } else if(action==='stop') uwLive=await pApi('ur-workflow/capture/stop',{session_id:session.id});
-    else uwLive.capture=await pApi('ur-workflow/capture/key',{action,session_id:session.id,confirmed});
-  } catch(e) { toast(e.message); } finally { uwBusy=false; if($('#uw-capture-panel'))$('#uw-capture-panel').innerHTML=uwCapturePanel(); }
-}
-async function uwPreviewTraining() {
-  const config=uwReadTraining(); $('#uw-command').textContent=uwTrainingCommand(config);
-  if(pMode==='demo') return toast('命令已更新并保存；现场环境检查请连接 Linux 本地工作台。');
-  try { const plan=await pApi('ur-workflow/training/preview',config); $('#uw-command').textContent=plan.command; $('#uw-training-check').textContent=Object.entries(plan.checks).map(([k,v])=>k+' '+(v?'✓':'缺失')).join(' · '); }
-  catch(e){toast(e.message)}
-}
-async function uwStartTraining() {
-  const config=uwReadTraining();
-  if(pMode==='demo')return toast('请在现场 Linux 工作台启动，或复制命令到 robodiff 终端执行。');
-  try { await pApi('ur-workflow/training/start',config); await uwPoll(); toast('训练任务已提交，状态以进程日志为准'); } catch(e){toast(e.message)}
-}
-async function uwCancelTraining(id) { try{await pApi('ur-workflow/training/cancel',{id}); await uwPoll()}catch(e){toast(e.message)} }
-async function uwPoll(show=false) {
-  if(pMode!=='live')return;
-  try { uwLive=await pApi('ur-workflow/status'); if(!uwBusy&&$('#uw-capture-panel'))$('#uw-capture-panel').innerHTML=uwCapturePanel(); if($('#uw-jobs'))$('#uw-jobs').innerHTML=uwJobs(); if(show)toast('已刷新现场进程状态'); }
-  catch(e){if(show)toast(e.message)}
-}
-views.ur5e=()=>pHead('UR5e · 现场工作台','GELLO 现场采集 → 完整轨迹 → robodiff 视觉 DP 训练。')+
-  `<section class="hero"><div class="hero-copy"><div class="eyebrow">UR5e / LIVE FOLLOW / 20 HZ</div><h2>从关节对齐<br>到视觉策略训练</h2><p>三路 RealSense RGB · GELLO · 二指夹爪<br>现场预设 --no-tactile / robodiff</p><div class="actions"><button class="primary" onclick="location.hash='ur-live'">进入现场采集台</button><button onclick="location.hash='edge-train'">配置视觉 DP 训练</button></div></div><div class="robot-stage">${pArm()}</div></section>
-  <div class="grid2"><section class="card"><h2>采集操作</h2><p>手动 ALIGN 对齐确认 → s 开始 → Enter 结束 → u 下一条。录制中可用 d 删除当前条。</p><a href="#ur-live">按键、日志和脚本配置 →</a></section><section class="card"><h2>当前训练预设</h2><p>60 epochs · batch 8 · lr 5e-5 · n_obs_steps 1<br>Resize 240×320 · Crop 216×288 · 随机裁剪</p><a href="#edge-train">修改参数与数据集路径 →</a></section><section class="card"><h2>设备状态</h2><div id="p-device-summary">${pDeviceSummary()}</div><a href="#sensors">接入设备 →</a></section><section class="card"><h2>采前与数据检查</h2><p>逐路确认相机位置、数据来源和完整 episode，再启动正式训练。</p><div class="actions"><a href="#camera-check">相机基准检查</a><a href="#edge-data">旁路数据管理</a></div></section></div>`;
-setInterval(()=>{if(['ur-live','edge-train'].includes(page))uwPoll()},1500);
-render();
+async function uwPreviewTraining(){const v=uwReadTraining();$('#uw-command').textContent=uwTrainingCommand(v);if(pMode==='demo')return toast('模拟界面不执行真实训练，请连接 Linux 本地工作台');if(!v.asset_id)return toast('请先在数据页登记、完整检查并选择数据集');try{const p=await pApi('ur-workflow/training/preview',{...v,dataset:v.asset_id});$('#uw-command').textContent=p.command;$('#uw-training-check').textContent=Object.entries(p.checks||{}).map(([k,v])=>k+' '+(v?'✓':'未通过')).join(' · ')+(p.errors?.length?' · '+p.errors.join('；'):'')}catch(e){toast(e.message)}}
+async function uwStartTraining(){if(uwBusy)return;const v=uwReadTraining();if(pMode==='demo')return toast('演示模式不启动训练进程');if(!v.asset_id)return toast('请先选择已完成检查的数据资产');uwBusy=true;try{await pApi('ur-workflow/training/start',{...v,dataset:v.asset_id});await uwPoll();toast('已提交训练请求，实际状态见任务日志')}catch(e){toast(e.message)}finally{uwBusy=false}}
+async function uwCancelTraining(id){try{await pApi('ur-workflow/training/cancel',{id});await uwPoll()}catch(e){toast(e.message)}}
+function uwJobs(){if(pMode==='demo')return '<p>演示模式不启动实际进程，真实训练由 Linux 工位运行。</p>';return (uwLive.jobs||[]).map(j=>`<div class="card-head"><strong>${esc(j.id)} · ${esc(j.status)}</strong>${j.status==='running'?`<button onclick="uwCancelTraining('${esc(j.id)}')">取消训练</button>`:''}</div><p>${esc(j.dataset)}</p><p>输出 ${esc(j.output_dir||'')}</p><pre class="log uw-terminal">${esc((j.log||[]).join('\n'))}</pre><p>${esc((j.checkpoints||[]).join('\n'))}</p>`).join('')||'<p>尚无现场训练任务。</p>'}
+async function uwPoll(show=false){if(pMode!=='live'||uwPolling)return;uwPolling=true;try{uwLive=await pApi('ur-workflow/status');if(!uwBusy)uwPaintCapture();if($('#uw-jobs'))$('#uw-jobs').innerHTML=uwJobs();if(show)toast('已读取原程序状态和平台会话')}catch(e){if(show)toast(e.message)}finally{uwPolling=false}}
+pages.push(['ur-live','现场采集']);const uwOldTrainingView=views['edge-train'];
+views['ur-live']=()=>pHead('现场采集','现场确认 → ALIGN → 多条录制 → 正常退出。')+`<section class="card fields">${uwCaptureSettings()}</section><section class="card"><div id="uw-capture-panel">${uwCapturePanel()}</div></section>`;
+views['edge-train']=()=>pHead('视觉 DP 训练','先登记数据并通过完整性检查，再选择训练。')+`<section class="card fields"><div class="uw-form">${uwFields.map(f=>uwInput(...f)).join('')}${uwInput('resize-h','Resize 高','number',uwConfig.resize[0])}${uwInput('resize-w','Resize 宽','number',uwConfig.resize[1])}${uwInput('crop-h','Crop 高','number',uwConfig.crop[0])}${uwInput('crop-w','Crop 宽','number',uwConfig.crop[1])}</div><label><input id="uw-random-crop" type="checkbox" ${uwConfig.random_crop?'checked':''}> 随机裁剪</label><div class="actions"><button onclick="uwPreviewTraining()">检查数据与环境</button><button onclick="uwStartTraining()">开始训练</button></div><p id="uw-training-check"></p><pre id="uw-command" class="log">${esc(uwTrainingCommand(uwConfig))}</pre></section><div id="uw-jobs">${uwJobs()}</div>`;
+views.ur5e=()=>pHead('UR5e · 工作台','工位配置 → 原程序采集 → 数据登记 → 选择训练。')+'<a href="#ur-live">进入现场采集 →</a>';
+setInterval(()=>{if(['ur-live','edge-train','ur-settings','ur5e'].includes(page))uwPoll()},1500);render();

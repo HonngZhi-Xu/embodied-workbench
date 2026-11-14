@@ -13,6 +13,8 @@ def handler_for(core, static_dir):
     if not hasattr(core, 'ur_workflow'):
         core.ur_workflow = URWorkflow(core)
         core.workstation = WorkstationStore(core.data_root)
+    if hasattr(core, 'load_external_config'):
+        core.load_external_config(core.workstation.read().get('profile') or {})
     class Handler(SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=str(static_dir), **kwargs)
@@ -43,7 +45,8 @@ def handler_for(core, static_dir):
                 return super().do_GET()
             try:
                 if url.path == '/api/health':
-                    response = dict(service='embodied-edge', version=2, hardware_commands='read-only',
+                    response = dict(service='embodied-edge', version='0.2.4', hardware_commands='read-only',
+                                    capture_control='external-script-managed',
                                     data_root=str(core.data_root))
                 elif url.path == '/api/status':
                     response = dict(devices=core.hub.snapshot(), capture=core.capture_status(),
@@ -62,6 +65,16 @@ def handler_for(core, static_dir):
                     response = core.datasets()
                 elif url.path == '/api/datasets/audit':
                     response = core.audit(parse_qs(url.query)['id'][0])
+                elif url.path == '/api/datasets/frame':
+                    query = parse_qs(url.query)
+                    response = core.assets.frame(query['id'][0], query.get('camera', ['camera_0'])[0],
+                                                 int(query.get('index', ['0'])[0]))
+                elif url.path == '/api/datasets/replay':
+                    query = parse_qs(url.query)
+                    response = core.assets.replay(query['id'][0], query.get('camera', ['camera_0'])[0],
+                                                  int(query.get('start', ['0'])[0]),
+                                                  int(query.get('count', ['12'])[0]),
+                                                  int(query.get('stride', ['1'])[0]))
                 elif url.path == '/api/ports':
                     try:
                         from serial.tools import list_ports
@@ -93,20 +106,39 @@ def handler_for(core, static_dir):
                     raise ValueError('Expected JSON object.')
                 route = urlsplit(self.path).path
                 if route == '/api/devices/connect':
-                    core.hub.connect(body['device'], body['config'])
+                    with core.lock, core.ur_workflow.lock:
+                        session = core.ur_workflow.capture
+                        if body['device'] in ('rgb', 'tactile') and session and session.get('running'):
+                            raise ValueError('原采集程序正在占用设备；请查看其本机预览窗口，不要重复打开相机或触觉串口。')
+                        core.hub.connect(body['device'], body['config'])
                     response = dict(accepted=True)
                 elif route == '/api/workstation':
                     with core.lock, core.ur_workflow.lock:
                         process = core.ur_workflow.capture_process
-                        if core.capture is not None or (process is not None and process.poll() is None) or any(j['status'] == 'running' for j in core.jobs.values()):
+                        session = core.ur_workflow.capture
+                        if core.capture is not None or (session and session.get('running')) or (process is not None and process.poll() is None) or any(j['status'] == 'running' for j in core.jobs.values()):
                             raise ValueError('请先结束采集或训练，再修改工位配置。')
                         response = core.workstation.save(body['profile'], body.get('expected_revision'))
+                        core.load_external_config(response['profile'])
+                elif route == '/api/ur-workflow/capture/preview':
+                    profile = core.workstation.read().get('profile') or {}
+                    response = core.ur_workflow.capture_plan(body.get('script', profile.get('capture_script', '')),
+                                                           body.get('capture_mode', profile.get('capture_mode', 'rgb_tactile')),
+                                                           body.get('resume_path', profile.get('resume_path')))
                 elif route == '/api/ur-workflow/capture/start':
-                    response = core.ur_workflow.start_capture(body['script'])
+                    with core.lock, core.ur_workflow.lock:
+                        if any(k in core.hub.workers for k in ('rgb', 'tactile')):
+                            raise ValueError('请先断开平台独立相机／触觉诊断，避免与原采集程序争用设备。')
+                        profile = core.workstation.read().get('profile') or {}
+                        response = core.ur_workflow.start_capture(body.get('script', profile.get('capture_script', '')),
+                            body.get('capture_mode', profile.get('capture_mode', 'rgb_tactile')),
+                            body.get('resume_path', profile.get('resume_path')),
+                            request_id=body.get('request_id'), confirmed_external_idle=body.get('confirmed_external_idle', False))
                 elif route == '/api/ur-workflow/capture/key':
-                    response = core.ur_workflow.send_key(body['action'], body['session_id'], body.get('confirmed', False))
+                    response = core.ur_workflow.send_key(body['action'], body['session_id'], body.get('confirmed', False), body.get('request_id'))
                 elif route == '/api/ur-workflow/capture/stop':
-                    response = core.ur_workflow.stop_capture(body['session_id'])
+                    response = core.ur_workflow.stop_capture(body['session_id'], method=body.get('method', 'interrupt'),
+                                                           confirmed=body.get('confirmed', False), request_id=body.get('request_id'))
                 elif route == '/api/ur-workflow/training/preview':
                     response = core.ur_workflow.prepare_training(body)
                 elif route == '/api/ur-workflow/training/start':
@@ -122,7 +154,7 @@ def handler_for(core, static_dir):
                     response = core.start_capture(body.get('tactile', False), body.get('require_camera_check', False),body.get('expected_cameras'))
                 elif route == '/api/camera-guard/baseline':
                     with core.lock:
-                        if core.capture is not None:
+                        if core.capture is not None or (core.ur_workflow.capture and core.ur_workflow.capture.get('running')):
                             raise ValueError('Finish or discard the active capture before changing a camera baseline.')
                         response = core.camera_guard.save_baseline(body['camera'], body['config'])
                 elif route == '/api/capture/save':
@@ -140,6 +172,12 @@ def handler_for(core, static_dir):
                         raise
                 elif route == '/api/datasets/combine':
                     response = core.combine(body['datasets'])
+                elif route == '/api/datasets/register':
+                    response = core.assets.register(body['path'])
+                elif route == '/api/datasets/scan':
+                    response = core.assets.scan()
+                elif route == '/api/datasets/audit':
+                    response = core.audit(body['dataset'])
                 elif route == '/api/training/start':
                     response = core.start_training(body)
                 elif route == '/api/training/cancel':
@@ -171,6 +209,8 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        if core.ur_workflow.capture and core.ur_workflow.capture.get('running'):
+            print('采集仍在运行：平台关闭不会发送 q 或终止信号，PTY 不能恢复；请现场核对原进程及保存结果。', flush=True)
         core.ur_workflow.close()
         server.server_close()
         for name in list(core.hub.workers):

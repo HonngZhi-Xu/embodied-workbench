@@ -45,46 +45,48 @@ def test_invalid_training_parameters_are_rejected(values):
 
 
 def workflow(monkeypatch):
+    from edge_agent.capture_observer import CaptureObserver
     core = SimpleNamespace(lock=threading.RLock(), jobs={})
     runner = URWorkflow(core)
-    runner.capture = dict(id='test-session', running=True, aligned=False,
-                          phase='waiting_align', align_prompt=False)
+    runner.capture = dict(id='test-session', running=True, controllable=True, aligned=False,
+                          startup_confirmed=True, phase='waiting_align', align_prompt=False, request_ids={})
     runner.capture_process = SimpleNamespace(poll=lambda: None)
     runner.capture_fd = 99
+    runner.capture_observer = CaptureObserver(runner.capture)
     sent = []
     monkeypatch.setattr(os, 'write', lambda fd, data: sent.append((fd, data)))
     return runner, sent
 
 
-def test_align_requires_prompt_and_operator_ack_before_keys(monkeypatch):
+def test_align_requires_script_evidence_and_operator_ack_before_keys(monkeypatch):
     runner, sent = workflow(monkeypatch)
-    with pytest.raises(ValueError):
-        runner.send_key('align', 'test-session', confirmed=True)
+    key = lambda action, confirmed=False: runner.send_key(action, 'test-session', confirmed, request_id='request-' + str(len(runner.capture['request_ids'])))
+    with pytest.raises(ValueError): key('align', True)
     runner.capture['align_prompt'] = True
-    runner.send_key('align', 'test-session', confirmed=True)
-    with pytest.raises(ValueError):
-        runner.send_key('start', 'test-session')
-    runner.send_key('ready', 'test-session', confirmed=True)
-    runner.send_key('start', 'test-session')
-    with pytest.raises(ValueError):
-        runner.send_key('start', 'test-session')
-    runner.send_key('finish', 'test-session')
-    runner.send_key('next', 'test-session')
-    with pytest.raises(ValueError):
-        runner.send_key('start', 'test-session')
-    runner.send_key('finish', 'test-session')
-    assert [v for _, v in sent] == [b'ALIGN\n', b's\n', b'\n', b'u\n', b'\n']
+    key('align', True)
+    with pytest.raises(ValueError): key('ready', True)
+    runner.capture_observer.event({'event':'alignment_completed'})
+    with pytest.raises(ValueError): key('start')
+    key('ready', True)
+    key('start')
+    assert runner.capture['phase'] == 'awaiting_receipt'
+    runner.capture_observer.event({'event':'recording_started', 'episode_id':1})
+    key('finish')
+    runner.capture_observer.event({'event':'episode_finished','episode_id':1,'queued':True})
+    key('next')
+    runner.capture_observer.event({'event':'recording_started','episode_id':2})
+    key('finish')
+    assert [v for _, v in sent] == [b'ALIGN\n', b's\n', b'\n', b's\n', b'\n']
 
 
 def test_delete_requires_confirmation_and_rejects_stale_session(monkeypatch):
     runner, sent = workflow(monkeypatch)
     runner.capture.update(aligned=True, phase='recording')
-    with pytest.raises(ValueError):
-        runner.send_key('discard', 'test-session')
-    with pytest.raises(ValueError):
-        runner.send_key('discard', 'old-session', confirmed=True)
+    with pytest.raises(ValueError): runner.send_key('discard','test-session',request_id='delete-request')
+    with pytest.raises(ValueError): runner.send_key('discard','old-session',True,request_id='delete-request')
     assert not sent
-    runner.send_key('discard', 'test-session', confirmed=True)
+    runner.send_key('discard','test-session',True,request_id='delete-request')
+    runner.send_key('discard','test-session',True,request_id='delete-request')
     assert sent == [(99, b'd\n')]
 
 

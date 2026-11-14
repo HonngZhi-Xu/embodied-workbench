@@ -13,6 +13,7 @@ import subprocess
 import threading
 import time
 import uuid
+from edge_agent.capture_session import CaptureSessions, capture_plan
 
 
 DEFAULTS = {
@@ -94,114 +95,25 @@ def terminate_group(process):
             process.kill()
 
 
-class URWorkflow:
+class URWorkflow(CaptureSessions):
     def __init__(self, core):
         self.core = core
         self.lock = threading.RLock()
-        self.capture = None
-        self.capture_process = None
-        self.capture_fd = None
         self.training_processes = {}
+        self.initialize_capture()
 
     def status(self):
         with self.core.lock, self.lock:
-            return dict(capture=None if self.capture is None else dict(self.capture),
+            return dict(capture=self._snapshot(),
                         jobs=[dict(j) for j in self.core.jobs.values() if j.get('runner') == 'robodiff'])
 
-    def start_capture(self, script):
-        if os.name != 'posix':
-            raise ValueError('现场采集终端需要在 Linux 工位运行本地服务。')
-        script = Path(script).expanduser().resolve()
-        if script.name != 'start_live_follow_local.sh' or not script.is_file():
-            raise ValueError('请选择现场已有的 start_live_follow_local.sh。')
-        import pty
-        with self.core.lock, self.lock:
-            if any(j['status'] == 'running' for j in self.core.jobs.values()):
-                raise ValueError('先结束当前训练，再启动现场采集。')
-            if self.core.capture is not None:
-                raise ValueError('先结束平台旁路录制。')
-            if self.capture_process is not None and self.capture_process.poll() is None:
-                raise ValueError('现场采集进程已经运行。')
-            master, slave = pty.openpty()
-            try:
-                process = subprocess.Popen(['bash', str(script), '--no-tactile'], cwd=script.parent.parent,
-                                           stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
-            except Exception:
-                os.close(master)
-                raise
-            finally:
-                os.close(slave)
-            session = dict(id='UR-' + uuid.uuid4().hex[:10], running=True, aligned=False,
-                           align_prompt=False, phase='waiting_align', log=[], last_command=None)
-            self.capture, self.capture_process, self.capture_fd = session, process, master
-
-            def read_terminal():
-                decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
-                tail = ''
-                try:
-                    while True:
-                        raw = os.read(master, 4096)
-                        if not raw:
-                            break
-                        chunk = decoder.decode(raw)
-                        with self.lock:
-                            session['log'] = (session['log'] + [chunk])[-100:]
-                            tail = (tail + chunk)[-4096:]
-                            session['align_prompt'] = session['align_prompt'] or 'ALIGN' in tail
-                except OSError:
-                    pass
-                finally:
-                    os.close(master)
-                    code = process.wait()
-                    with self.lock:
-                        session.update(running=False, exit_code=code)
-                        if self.capture is session:
-                            self.capture_fd = None
-            threading.Thread(target=read_terminal, daemon=True).start()
-            return dict(session)
-
-    def send_key(self, action, session_id, confirmed=False):
-        keys = {'align': b'ALIGN\n', 'start': b's\n', 'finish': b'\n', 'discard': b'd\n', 'next': b'u\n'}
-        if action not in keys and action != 'ready':
-            raise ValueError('Unknown capture action.')
-        with self.lock:
-            session = self.capture
-            if not session or session['id'] != session_id or not session['running'] or self.capture_fd is None or self.capture_process.poll() is not None:
-                raise ValueError('现场终端已结束或会话已变化，请刷新。')
-            if action == 'ready':
-                if session['phase'] != 'align_sent' or not confirmed:
-                    raise ValueError('先发送 ALIGN，再观察终端确认对齐完成。')
-                session.update(aligned=True, phase='ready')
-                return dict(session)
-            if action == 'align':
-                if not session['align_prompt'] or session['phase'] != 'waiting_align' or not confirmed:
-                    raise ValueError('等待终端 ALIGN 提示，并确认现场姿态。')
-            elif not session['aligned']:
-                raise ValueError('先等待并手动确认 ALIGN。')
-            if action == 'discard' and not confirmed:
-                raise ValueError('删除当前条需要确认。')
-            if action in ('finish', 'discard') and session['phase'] not in ('recording', 'next_sent'):
-                raise ValueError('当前没有已发送的录制命令。')
-            if action in ('start', 'next') and session['phase'] in ('recording', 'next_sent'):
-                raise ValueError('先结束当前条。')
-            if action == 'next' and session['phase'] != 'between':
-                raise ValueError('结束当前条后再进入下一条。')
-            os.write(self.capture_fd, keys[action])
-            phases = {'align': 'align_sent', 'start': 'recording', 'finish': 'between',
-                      'discard': 'between', 'next': 'next_sent'}
-            session.update(last_command=action, phase=phases[action])
-            return dict(session)
-
-    def stop_capture(self, session_id):
-        with self.lock:
-            if not self.capture or self.capture['id'] != session_id:
-                raise ValueError('会话已变化。')
-            process = self.capture_process
-        terminate_group(process)
-        return self.status()
-
     def prepare_training(self, request):
+        request = dict(request)
+        identifier = request.get('asset_id') or request.get('dataset') or DEFAULTS['dataset']
+        if hasattr(self.core, 'resolve_training_dataset'):
+            request['dataset'] = str(self.core.resolve_training_dataset(identifier))
         plan = training_plan(request)
+        plan['asset_id'] = identifier
         values = plan['values']
         checks = dict(linux=os.name == 'posix', conda=bool(shutil.which('conda')),
                       train_script=(Path(values['project'])/'train.py').is_file(),
@@ -213,7 +125,7 @@ class URWorkflow:
 
     def start_training(self, request):
         with self.core.lock:
-            if self.core.capture is not None or (self.capture_process is not None and self.capture_process.poll() is None):
+            if self.core.capture is not None or (self.capture and self.capture.get('running')) or (self.capture_process is not None and self.capture_process.poll() is None):
                 raise ValueError('请先停止采集并确认数据集保存完成，再启动训练。')
             return self._start_training(request)
 
@@ -237,23 +149,25 @@ class URWorkflow:
             identifier = 'UR-DP-' + uuid.uuid4().hex[:10]
             values = plan['values']
             output = Path(values['output_root']) / datetime.now().strftime('%Y.%m.%d/%H.%M.%S') / identifier
-            output.mkdir(parents=True, exist_ok=False)
+            # Platform receipts/logs belong to the platform, never to the original project.
+            platform_run = self.core.data_root / 'ur_training' / identifier
+            platform_run.mkdir(parents=True, exist_ok=False)
             command = [shutil.which('conda'), 'run', '--no-capture-output', '-n', values['conda_env'],
                        'python', 'train.py', '--config-name=train_gello_live_image_20hz']
             command += plan['overrides'] + ['hydra.run.dir=' + json.dumps(str(output))]
-            (output/'platform-request.json').write_text(json.dumps(dict(request=values, argv=command), indent=2), encoding='utf-8')
+            (platform_run/'platform-request.json').write_text(json.dumps(dict(request=values, asset_id=plan['asset_id'], argv=command), indent=2), encoding='utf-8')
             process = subprocess.Popen(command, cwd=values['project'], stdout=subprocess.PIPE,
                                        stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace',
                                        start_new_session=True)
             job = dict(id=identifier, runner='robodiff', status='running', dataset=values['dataset'],
-                       modality='rgb', device='现场配置', log=[], output_dir=str(output), started_at=time.time())
+                       modality='rgb', device='现场配置', log=[], output_dir=str(output), platform_log_dir=str(platform_run), started_at=time.time())
             self.core.jobs[identifier] = job
             self.training_processes[identifier] = process
 
             def monitor():
                 failure = None
                 try:
-                    with (output/'platform-process.log').open('w', encoding='utf-8') as log:
+                    with (platform_run/'platform-process.log').open('w', encoding='utf-8') as log:
                         for line in process.stdout:
                             log.write(line)
                             log.flush()
@@ -283,7 +197,6 @@ class URWorkflow:
 
     def close(self):
         processes = list(self.training_processes.values())
-        if self.capture_process is not None:
-            processes.append(self.capture_process)
+        self.detach_capture()
         for process in processes:
             terminate_group(process)

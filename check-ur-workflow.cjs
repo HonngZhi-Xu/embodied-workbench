@@ -1,46 +1,34 @@
-const fs = require('fs');
-const vm = require('vm');
-const assert = require('assert');
-const elements = new Map();
-function element(key) {
-  if (!elements.has(key)) elements.set(key, {
-    innerHTML: '', value: '', checked: false, style: {}, classList: {toggle() {}},
-    insertAdjacentHTML(_position, html) { this.innerHTML += html; },
-    showModal() {}, close() {}
-  });
-  return elements.get(key);
-}
-const context = {
-  console, document: {querySelector: element, querySelectorAll: () => []},
-  location: {hash: '#ur5e'}, window: {addEventListener() {}, scrollTo() {}},
-  localStorage: {getItem() {return null;}, setItem() {}},
-  setInterval() {}, setTimeout() {}, clearTimeout() {}, URL, Blob, AbortSignal
-};
-vm.createContext(context);
-for (const file of ['app.js','platform.js','camera-guard.js','ur-workflow.js']) {
-  vm.runInContext(fs.readFileSync('dist/'+file, 'utf8'), context);
-}
-const run = code => vm.runInContext(code, context);
-assert(element('#app').innerHTML.includes('现场工作台'));
-run("location.hash='#ur-live';render()");
-assert(element('#app').innerHTML.includes('u ↵ 进入下一条'));
-run("uwDemo={id:'demo',running:true,aligned:false,align_prompt:true,phase:'waiting_align',log:[]}");
-(async () => {
-  await run("uwCaptureKey('align',true)");
-  assert.equal(run('uwDemo.phase'), 'align_sent');
-  await run("uwCaptureKey('ready',true)");
-  await run("uwCaptureKey('start')");
-  await run("uwCaptureKey('finish')");
-  await run("uwCaptureKey('next')");
-  assert.equal(run('uwDemo.phase'), 'next_sent');
-  const command = run('uwTrainingCommand(uwDefaults)');
-  assert(command.includes('train_gello_live_image_20hz'));
-  assert(command.includes('gripper_position'));
-  assert(command.includes('training.num_epochs=60'));
-  assert(command.includes('${now:%Y.%m.%d}'));
-  run("location.hash='#edge-train';render()");
-  assert(element('#app').innerHTML.includes('训练项目目录'));
-  run("pMode='live'");
-  assert.equal(run('uwSession()'), null);
-  console.log('PASS UR site controls, isolated demo, editable training and exact command fields.');
-})().catch(error => { console.error(error); process.exitCode=1; });
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const elements=new Map();const element=k=>{if(!elements.has(k))elements.set(k,{innerHTML:'',textContent:'',value:'',checked:false,style:{},classList:{toggle(){}},insertAdjacentHTML(_p,h){this.innerHTML+=h},showModal(){},close(){}});return elements.get(k)};
+const context={console,document:{querySelector:element,querySelectorAll:()=>[]},location:{hash:'#ur5e'},window:{addEventListener(){},scrollTo(){}},localStorage:{getItem(){return null},setItem(){}},setInterval(){},setTimeout(){},clearTimeout(){},URL,Blob,AbortSignal};
+vm.createContext(context);for(const f of ['app.js','platform.js','camera-guard.js','ur-workflow.js'])vm.runInContext(fs.readFileSync('dist/'+f,'utf8'),context);const run=c=>vm.runInContext(c,context);
+(async()=>{
+  assert(!run('uwCaptureCommand(uwDefaults)').includes('--no-tactile'));
+  assert(run("uwCaptureCommand({...uwDefaults,capture_mode:'rgb_only',resume_path:'/saved/data with space'})").includes("--no-tactile --resume '/saved/data with space'"));
+  run("location.hash='#ur-live';render()");assert(element('#app').innerHTML.includes('u ↵ 删除最近已保存的一条'));assert(!element('#app').innerHTML.includes('u ↵ 进入下一条'));
+  run("uwDemo={id:'demo',running:true,aligned:false,phase:'startup_wait',allowed_actions:['startup'],log:['说明 ALIGN 后续输入'],control_available:true}");
+  assert.equal(run("uwAllowed('align')"),false);await run("uwCaptureKey('align',true)");assert.equal(run('uwDemo.phase'),'startup_wait');
+  await run("uwCaptureKey('startup',true)");assert.equal(run('uwDemo.phase'),'waiting_align');
+  await run("uwCaptureKey('align',true)");assert.equal(run('uwDemo.phase'),'alignment_review');
+  await run("uwCaptureKey('ready',true)");await run("uwCaptureKey('start')");assert.equal(run('uwDemo.phase'),'recording');
+  await run("uwCaptureKey('finish')");assert(run('uwCapturePanel()').includes('尚未确认落盘'));assert(run('uwCapturePanel()').includes('仍在持续遥操跟随'));
+  await run("uwCaptureKey('delete_last')");assert.equal(run('uwDemo.phase'),'ready');
+  await run("uwCaptureKey('start')");assert.equal(run('uwDemo.phase'),'recording');await run("uwCaptureKey('finish')");
+  const count=run('uwDemo.log.length');await run("uwCaptureKey('delete_last',true,'stale-session')");assert.equal(run('uwDemo.log.length'),count);
+  const command=run('uwTrainingCommand(uwDefaults)');for(const text of ['train_gello_live_image_20hz','gripper_position','training.num_epochs=60','${now:%Y.%m.%d}'])assert(command.includes(text));
+  // A live acknowledgement stays pending; one in-flight request prevents repeated clicks.
+  run("pMode='live';uwLive.capture={id:'live',running:true,aligned:true,control_available:true,phase:'ready',allowed_actions:['start','delete_last','quit'],log:[]};globalThis.apiCalls=[];globalThis.reply=null;pApi=(path,body)=>{apiCalls.push({path,body});return new Promise(resolve=>{reply=resolve})}");
+  const first=run("uwCaptureKey('delete_last',true,'live')");await run("uwCaptureKey('delete_last',true,'live')");assert.equal(run('apiCalls.length'),1);
+  assert(run('apiCalls[0].body.request_id').startsWith('req-'));assert.equal(run('apiCalls[0].body.session_id'),'live');
+  run("reply({...uwLive.capture,phase:'awaiting_receipt',allowed_actions:[],command_pending:'delete_last'})");await first;
+  assert.equal(run('uwLive.capture.phase'),'awaiting_receipt');assert.equal(run("uwAllowed('start')"),false);
+  run("uwLive.capture={...uwLive.capture,phase:'ready',allowed_actions:['quit'],command_pending:null};pApi=async(path,body)=>{apiCalls.push({path,body});return {...uwLive.capture,phase:'exiting',allowed_actions:[],command_pending:'quit'}}");
+  await run("uwCaptureKey('quit',true,'live')");assert.equal(run('apiCalls[1].path'),'ur-workflow/capture/key');assert.equal(run('apiCalls[1].body.action'),'quit');assert.equal(run('uwLive.capture.running'),true);
+  run("pApi=async(path,body)=>{apiCalls.push({path,body});return {capture:{...uwLive.capture,phase:'unknown',allowed_actions:[]},jobs:[]}}");
+  await run("uwCaptureKey('interrupt',true,'live')");assert.equal(run('apiCalls[2].path'),'ur-workflow/capture/stop');assert.equal(run('apiCalls[2].body.method'),'interrupt');
+  run("uwLive.capture={...uwLive.capture,controllable:false,phase:'uncontrolled',allowed_actions:[]}");
+  await run("uwCaptureKey('interrupt',true,'live')");assert.equal(run('apiCalls.length'),3);assert(run('uwCapturePanel()').includes('只读会话'));
+  run("uwLive.capture={...uwLive.capture,save_state:'queued',episode_result:{queued:true,saved:false}};");assert(run('uwCapturePanel()').includes('尚未确认落盘'));
+  assert(!run('uwCapturePanel()').includes('机械臂已停止'));
+  console.log('PASS startup prompt gating, corrected s/u/q controls, explicit confirmation, stale-session guard, click serialization, request IDs, pending receipts and training command.');
+})().catch(e=>{console.error(e);process.exitCode=1});

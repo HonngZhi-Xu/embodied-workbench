@@ -1,19 +1,15 @@
-# Source snapshot
+# Platform source snapshot v0.2.4
 
-- Software: Embodied Workbench v0.2.1, UR5e / GELLO / RealSense / PaXini / DP.
-- Workbench source revision before GitHub handoff documentation:
-  `3b2c55e6b5848f59283823f25281da772d1c2374`.
-- Robotics upstream baseline: `03a16761ed0f5b813423a4e78ed47595bf9d5e05`.
-- Scope: current source and docs, including three-camera preflight checks.
-- This is a fresh source snapshot; it does not import the hosted Site's Git
-  history or deployment identity.
-- Excluded: `.git/`, `.openai/`, Python environments and caches, test output,
-  captured datasets, trained checkpoints, vendor manuals, workstation photos
-  and local credentials.
-- Verification: 29 offline Python tests passed on synthetic fixtures, including
-  an actual CPU DP training subprocess and checkpoint creation. Frontend script
-  state tests also passed. No physical UR5e / RealSense / PaXini acceptance or
-  browser layout acceptance has been completed.
+- Date: 2026-11-14 (Asia/Hong_Kong).
+- Software: Embodied Workbench, UR5e external GELLO acquisition adaptation.
+- Site source baseline before this change: `108f2f08c0ef3ef38e1f2e8a22d36cb7a2ad252a`.
+- GitHub baseline: `054a854f630b318655f4f015fc89fac073093064`.
+- Scope: platform UI, edge_agent, platform-only fixtures/tests, instructions and downloadable integration bundle.
+- Original GELLO / diffusion_policy project code, format and verification receipts are not modified or injected.
+- The independent Xiaomi / MuJoCo demo is not part of this platform snapshot.
+- No captured datasets, checkpoints, vendor manuals, workstation photos, credentials or local runtime settings are included.
+- The GitHub export excludes the Site hosting identity and Git history; original upstream licenses remain in place.
 
-The v0.3 diagrams in `docs/architecture-v03/` describe target architecture;
-they do not indicate that the asset database or model registry is implemented.
+Offline verification uses synthetic interaction/receipt fixtures and temporary stores.
+Actual Linux PTY operation, original collector prompt text and hardware behavior require on-site acceptance.
+See `UR_SITE_WORKFLOW.md` for operation and boundaries.
